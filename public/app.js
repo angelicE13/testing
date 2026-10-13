@@ -22,7 +22,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.13-4';
+export const APP_VERSION = '2026.10.13-5';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -295,9 +295,9 @@ function tripForm(host, { mode, trip = null, onSaved, onModeChange }) {
 const QUICK = [
   { key: 'abn', label: 'Business', sub: 'ABN', category: 'business' },
   { key: 'tfn', label: 'Business', sub: 'TFN', category: 'business' },
-  { key: 'personal_travel', label: 'Personal', sub: '', category: 'personal' },
   { key: 'work', label: 'To work', sub: '', category: 'personal' },
   { key: 'home', label: 'To home', sub: '', category: 'personal' },
+  { key: 'personal_travel', label: 'Personal', sub: '', category: 'personal' },
 ];
 const QUICK_LABEL = {
   abn: 'Business · ABN', tfn: 'Business · TFN', personal_travel: 'Personal', work: 'To work', home: 'To home',
