@@ -348,3 +348,5 @@ select { appearance: auto; }
 .row > label > input { min-width: 0; }
 .create-type { margin: 4px 0 12px; }
 .create-type button { min-height: 38px; padding: 6px 14px; }
+.claim-row.sub { padding: 2px 0 2px 14px; border-top: none; font-size: .9rem; color: var(--muted); }
+.expense.other { border-left-color: var(--muted); }

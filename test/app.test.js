@@ -164,17 +164,21 @@ test('expenses: validation and custom "Other" categories', () => {
   assert.equal(normaliseExpense({ amount: 5, category: 'fuel', category_label: 'x', date: '2026-10-01' }).category_label, '');
 });
 
-test('expenses: every expense × business-use %, split ABN/TFN by business km', () => {
+test('expenses: only car-related expenses are split by mileage', () => {
   const list = [
     { amount: 100, category: 'fuel' },
     { amount: 300, category: 'service' },
-    { amount: 50, category: 'clothing' },
-    { amount: 50, category: 'other', category_label: 'Phone holder' },
+    { amount: 50, category: 'clothing' }, // not car-related
+    { amount: 50, category: 'other', category_label: 'Phone holder' }, // Other defaults to car-related
+    { amount: 20, category: 'other', category_label: 'Stationery', car_related: false },
   ];
   const s = summariseExpenses(list, { businessUse: 60, abnShare: 75 });
-  assert.equal(s.total, 500);
-  assert.equal(s.claimableTotal, 300);
-  assert.deepEqual(s.claimable, { abn: 225, tfn: 75 });
+  assert.equal(s.total, 520);
+  assert.equal(s.carTotal, 450);
+  assert.equal(s.nonCarTotal, 70);
+  assert.equal(s.claimableTotal, 270);
+  assert.deepEqual(s.claimable, { abn: 202.5, tfn: 67.5 });
+  assert.deepEqual(s.split.personal, { pct: 40, amount: 180 });
   assert.equal(s.byCategory['Phone holder'], 50);
 });
 

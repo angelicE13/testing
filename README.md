@@ -37,9 +37,12 @@ home screen. After the first visit it works with no signal.
 - Categories: petrol, service, repairs, parts, tyres, car wash, registration,
   insurance, tolls & parking, clothing/uniform, laundry, plus **Other…** for
   anything else. Names you type are remembered as quick buttons.
-- **Estimated claimable:** every expense × your business-use % (from the ATO
-  logbook, or your trips until you have one), split between ABN and TFN by
-  business km.
+- **Car-related expenses** (car costs, tolls & parking, and "Other" items
+  marked car-related) are split by your mileage: business-use % (from the ATO
+  logbook, or your trips until you have one), then ABN vs TFN by business km.
+  The rest is **Personal**.
+- **Not car-related** expenses (clothing, laundry, "Other" items switched off)
+  are listed with their totals but **not split**.
 
 ### History
 - Separate **Mileage** and **Expenses** histories, each with search and filters.
@@ -58,8 +61,9 @@ home screen. After the first visit it works with no signal.
 - **Expense report** for any date range:
   - totals by category with % of total
   - every expense
-  - at the end, the split of the total into **Personal / ABN / TFN** (% and $),
-    based on your mileage
+  - at the end, the split of the **car-related** expenses into
+    **Personal / ABN / TFN** (% and $), based on your mileage
+  - then the not-car-related total (not split) and the overall total
 - **ATO 12-week logbook** with business-use %.
 - **Tax pack:** one zip per financial year with the workbook, the logbook, a
   summary and all receipt photos, ready for your accountant.

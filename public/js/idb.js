@@ -22,7 +22,16 @@ export async function idbAdapter() {
       db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true }); // receipt images
     }
   };
+  // Another tab still running an older version keeps the database open and blocks the upgrade.
+  open.onblocked = () => {
+    window.dispatchEvent(new CustomEvent('db-blocked'));
+  };
   const db = await req(open);
+  // If a newer version opens in another tab later, step aside so it can upgrade, then reload.
+  db.onversionchange = () => {
+    db.close();
+    window.location.reload();
+  };
   const store = (name, mode = 'readonly') => db.transaction(name, mode).objectStore(name);
   return {
     getAll: (name) => req(store(name).getAll()),

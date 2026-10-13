@@ -1,6 +1,6 @@
 // Expenses tab: quick entry with a receipt photo, list by month, edit/delete.
 import {
-  CATEGORY, EXPENSE_CATEGORIES, categoryLabel, customCategories, expensesInRange, recentSuppliers, summariseExpenses,
+  CATEGORY, EXPENSE_CATEGORIES, categoryLabel, customCategories, expensesInRange, isCarRelated, recentSuppliers, summariseExpenses,
 } from './js/expenses.js';
 import { localDate, periodContaining } from './js/periods.js';
 import { summarise, tripsInRange } from './js/logic.js';
@@ -17,6 +17,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
   let photo = { id: null, pending: null, url: null }; // pending = newly taken photo not yet saved
   let category = null;
   let otherLabel = '';
+  let otherCar = true; // "Other" items: split by mileage?
 
   // ---------- lists ----------
   const filter = { q: '', group: 'all', month: 'all' };
@@ -98,11 +99,12 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     $('#expense-summary').innerHTML = `
       <div class="chips period">${PERIODS.map(([k, l]) => `<button type="button" data-period="${k}" class="${k === period ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div class="big-total">${money(s.total)} <span>spent · ${s.count} item${s.count === 1 ? '' : 's'}</span></div>
-      <div class="claim-row"><span>Est. claimable ABN</span><strong>${money(s.claimable.abn)}</strong></div>
-      <div class="claim-row"><span>Est. claimable TFN</span><strong>${money(s.claimable.tfn)}</strong></div>
-      <p class="muted small">All expenses × ${businessUse}% business use
-        ${logbook ? '(ATO logbook)' : '(from your trips — create an ATO logbook in Reports for the real figure)'},
-        split ABN ${abnShare}% / TFN ${Math.round((100 - abnShare) * 10) / 10}% by business km.</p>`;
+      <div class="claim-row"><span>Car-related (split by mileage)</span><strong>${money(s.carTotal)}</strong></div>
+      <div class="claim-row sub"><span>Personal ${s.split.personal.pct}%</span><span>${money(s.split.personal.amount)}</span></div>
+      <div class="claim-row sub"><span>ABN ${s.split.abn.pct}%</span><span>${money(s.split.abn.amount)}</span></div>
+      <div class="claim-row sub"><span>TFN ${s.split.tfn.pct}%</span><span>${money(s.split.tfn.amount)}</span></div>
+      ${s.nonCarTotal ? `<div class="claim-row"><span>Not car-related (not split)</span><strong>${money(s.nonCarTotal)}</strong></div>` : ''}
+      <p class="muted small">Business use ${businessUse}% ${logbook ? '(ATO logbook)' : '(from your trips — create an ATO logbook in Reports for the real figure)'}.</p>`;
   }
 
   $('#expense-summary').addEventListener('click', (e) => {
@@ -139,11 +141,17 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     const customs = customCategories(store.expenses);
     $('#cat-grid').innerHTML = [
       ...EXPENSE_CATEGORIES.filter((c) => c.key !== 'other').map((c) => `<button type="button" data-cat="${c.key}" class="cat-${c.group}${c.key === category ? ' on' : ''}">${c.label}</button>`),
-      ...customs.map((n) => `<button type="button" data-cat="other" data-label="${esc(n)}" class="cat-other${category === 'other' && otherLabel.toLowerCase() === n.toLowerCase() ? ' on' : ''}">${esc(n)}</button>`),
-      `<button type="button" data-cat="other" data-label="" class="cat-other cat-new${category === 'other' && !customs.some((n) => n.toLowerCase() === otherLabel.toLowerCase()) ? ' on' : ''}">Other…</button>`,
+      ...customs.map((c) => `<button type="button" data-cat="other" data-label="${esc(c.label)}" data-car="${c.car}" class="cat-other${category === 'other' && otherLabel.toLowerCase() === c.label.toLowerCase() ? ' on' : ''}">${esc(c.label)}</button>`),
+      `<button type="button" data-cat="other" data-label="" data-car="true" class="cat-other cat-new${category === 'other' && !customs.some((c) => c.label.toLowerCase() === otherLabel.toLowerCase()) ? ' on' : ''}">Other…</button>`,
     ].join('');
-    const isNewOther = category === 'other' && !customs.some((n) => n.toLowerCase() === otherLabel.toLowerCase());
+    const isNewOther = category === 'other' && !customs.some((c) => c.label.toLowerCase() === otherLabel.toLowerCase());
     $('#other-row').classList.toggle('hidden', !isNewOther);
+    $('#other-car-row').classList.toggle('hidden', category !== 'other');
+    form.elements.car_related.checked = otherCar;
+    const car = category === 'other' ? otherCar : Boolean(CATEGORY[category]?.car);
+    $('#split-note').textContent = !category ? ''
+      : car ? 'Car-related: split by your business-use % (mileage) into Personal / ABN / TFN.'
+        : 'Not car-related: listed in reports with its total, not split by mileage.';
     $('#odo-row').classList.toggle('hidden', !CATEGORY[category]?.odometer);
     const suppliers = recentSuppliers(store.expenses, category);
     $('#supplier-chips').innerHTML = suppliers.map((n) => `<button type="button" data-supplier="${esc(n)}">${esc(n)}</button>`).join('');
@@ -163,6 +171,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     editing = exp;
     category = exp?.category || null;
     otherLabel = exp?.category === 'other' ? exp.category_label : '';
+    otherCar = exp ? isCarRelated(exp) : true;
     photo = { id: exp?.photo_id || null, pending: null, url: null };
     form.reset();
     $('#expense-dialog h2').textContent = exp ? 'Edit expense' : 'Add expense';
@@ -190,12 +199,14 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     category = b.dataset.cat;
     if (category === 'other') {
       otherLabel = b.dataset.label;
+      otherCar = b.dataset.car !== 'false';
       form.elements.other_label.value = otherLabel;
     }
     paint();
     if (category === 'other' && !otherLabel) form.elements.other_label.focus();
   });
   form.elements.other_label.addEventListener('input', (e) => { otherLabel = e.target.value; });
+  form.elements.car_related.addEventListener('change', (e) => { otherCar = e.target.checked; paint(); });
   $('#supplier-chips').addEventListener('click', (e) => {
     const b = e.target.closest('[data-supplier]');
     if (b) form.elements.supplier.value = b.dataset.supplier;
@@ -237,6 +248,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
         amount: form.elements.amount.value,
         category,
         category_label: category === 'other' ? form.elements.other_label.value : '',
+        car_related: category === 'other' ? otherCar : undefined,
         date: form.elements.date.value,
         supplier: form.elements.supplier.value,
         odometer: CATEGORY[category]?.odometer ? form.elements.odometer.value : null,

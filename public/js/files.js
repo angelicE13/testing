@@ -21,32 +21,40 @@ async function expenseXlsxBlob(report) {
   if (car) ws.addRow([`Car: ${[car.make, car.model].filter(Boolean).join(' ')} · Rego ${car.rego || '-'}`]);
   ws.addRow([]);
   ws.addRow(['By category']).font = { bold: true, size: 12 };
-  styleHeader(ws.addRow(['Category', 'Items', 'Amount', '% of total']));
-  for (const c of s.categories) ws.addRow([c.label, c.count, c.amount, c.pct / 100]);
-  const total = ws.addRow(['Total expenses', s.count, s.total, s.total ? 1 : 0]);
-  total.font = { bold: true };
+  styleHeader(ws.addRow(['Category', 'Car-related', 'Items', 'Amount', '% of total']));
+  for (const c of s.categories) ws.addRow([c.label, c.car ? 'Yes' : 'No', c.count, c.amount, c.pct / 100]);
+  ws.addRow(['Total expenses', '', s.count, s.total, s.total ? 1 : 0]).font = { bold: true };
   ws.addRow([]);
-  ws.addRow(['Split of total expenses']).font = { bold: true, size: 12 };
-  styleHeader(ws.addRow(['', '', 'Amount', '% of total']));
-  ws.addRow(['Personal', '', s.split.personal.amount, s.split.personal.pct / 100]);
-  ws.addRow(['ABN', '', s.split.abn.amount, s.split.abn.pct / 100]);
-  ws.addRow(['TFN', '', s.split.tfn.amount, s.split.tfn.pct / 100]);
-  ws.addRow(['Total', '', s.total, s.total ? 1 : 0]).font = { bold: true };
-  ws.addRow([]);
+  ws.addRow([`Split of car-related expenses (by mileage)`]).font = { bold: true, size: 12 };
+  styleHeader(ws.addRow(['', '', '', 'Amount', '% of car-related']));
+  ws.addRow(['Personal', '', '', s.split.personal.amount, s.split.personal.pct / 100]);
+  ws.addRow(['ABN', '', '', s.split.abn.amount, s.split.abn.pct / 100]);
+  ws.addRow(['TFN', '', '', s.split.tfn.amount, s.split.tfn.pct / 100]);
+  ws.addRow(['Total car-related', '', '', s.carTotal, s.carTotal ? 1 : 0]).font = { bold: true };
   ws.addRow([`Based on ${s.businessUse}% business use (${s.businessUseSource}); business part split ABN ${s.abnShare}% / TFN ${Math.round((100 - s.abnShare) * 10) / 10}% by business km.`]).font = { italic: true, color: { argb: 'FF5F6B7A' } };
+  if (s.nonCarTotal) {
+    ws.addRow([]);
+    ws.addRow(['Not car-related (not split)']).font = { bold: true, size: 12 };
+    styleHeader(ws.addRow(['Category', '', 'Items', 'Amount', '']));
+    for (const c of s.categories.filter((x) => !x.car)) ws.addRow([c.label, '', c.count, c.amount]);
+    ws.addRow(['Total not car-related', '', '', s.nonCarTotal]).font = { bold: true };
+  }
+  ws.addRow([]);
+  ws.addRow(['TOTAL EXPENSES', '', s.count, s.total]).font = { bold: true, size: 12 };
   ws.getColumn(1).width = 30;
-  ws.getColumn(2).width = 8;
-  ws.getColumn(3).width = 14;
-  ws.getColumn(4).width = 12;
-  ws.getColumn(3).numFmt = '$#,##0.00';
-  ws.getColumn(4).numFmt = '0.0%';
+  ws.getColumn(2).width = 12;
+  ws.getColumn(3).width = 8;
+  ws.getColumn(4).width = 14;
+  ws.getColumn(5).width = 16;
+  ws.getColumn(4).numFmt = '$#,##0.00';
+  ws.getColumn(5).numFmt = '0.0%';
 
   const x = wb.addWorksheet('All expenses', { views: [{ state: 'frozen', ySplit: 2 }] });
   x.addRow([`${report.title} (period covered: ${report.period_start} to ${report.period_end})`]).font = { bold: true };
   styleHeader(x.addRow(EXPENSE_COLUMNS.map(([, l]) => l)));
   for (const r of report.expenses.rows) x.addRow(EXPENSE_COLUMNS.map(([k]) => r[k]));
-  [12, 20, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
-  x.getColumn(4).numFmt = '$#,##0.00';
+  [12, 20, 12, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
+  x.getColumn(5).numFmt = '$#,##0.00';
   return new Blob([await wb.xlsx.writeBuffer()], { type: XLSX_TYPE });
 }
 
@@ -80,8 +88,8 @@ async function xlsxBlob(report) {
     h.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     h.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E79' } };
     for (const r of report.expenses.rows) x.addRow(EXPENSE_COLUMNS.map(([k]) => r[k]));
-    [12, 20, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
-    x.getColumn(4).numFmt = '$#,##0.00';
+    [12, 20, 12, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
+    x.getColumn(5).numFmt = '$#,##0.00';
     s.addRow([]);
     s.addRow(['Expenses']).font = { bold: true, size: 12 };
     for (const line of expenseSummaryLines(report.expenses.summary)) s.addRow(line);

@@ -30,7 +30,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.14-3';
+export const APP_VERSION = '2026.10.14-4';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -846,7 +846,8 @@ function renderReports() {
         <div class="report-main">
           <div class="report-title"><strong>${esc(r.label)}</strong>${filter === 'all' ? `<span class="badge">${REPORT_BADGE.expenses}</span>` : ''}</div>
           <div class="muted">${money(x.total)} · ${x.count} item${x.count === 1 ? '' : 's'} · ${x.categories.length} categor${x.categories.length === 1 ? 'y' : 'ies'}</div>
-          <div class="muted">Personal ${x.split.personal.pct}% · ABN ${x.split.abn.pct}% · TFN ${x.split.tfn.pct}%</div>
+          <div class="muted">Car-related ${money(x.carTotal)}: Personal ${x.split.personal.pct}% · ABN ${x.split.abn.pct}% · TFN ${x.split.tfn.pct}%</div>
+          ${x.nonCarTotal ? `<div class="muted">Not car-related (not split) ${money(x.nonCarTotal)}</div>` : ''}
         </div>
         <div class="actions">
           <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
@@ -1230,6 +1231,11 @@ function show(view) {
 $('#tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-view]');
   if (b) show(b.dataset.view);
+});
+
+window.addEventListener('db-blocked', () => {
+  $('#new-trip').innerHTML = `<div class="warn">The app is updating, but it's also open in another tab or window.
+    Close the other Mileage tabs/windows — this page continues automatically.</div>`;
 });
 
 async function init() {
