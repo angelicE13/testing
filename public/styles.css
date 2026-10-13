@@ -201,3 +201,4 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .danger-link { color: var(--danger); }
 .big-number::-webkit-outer-spin-button, .big-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .big-number { -moz-appearance: textfield; appearance: textfield; }
+.version { text-align: center; margin: 8px 0 16px; }

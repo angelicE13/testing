@@ -22,6 +22,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
+export const APP_VERSION = '2026.10.13-4';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -727,6 +728,7 @@ async function init() {
   navigator.storage?.persist?.().catch(() => {});
 
   $('#tz').textContent = TIME_ZONE.replace(/_/g, ' ');
+  $('#version').textContent = `Version ${APP_VERSION}`;
   const now = new Date();
   $('#custom-report [name=from]').value = toLocalInput(new Date(now.getFullYear(), now.getMonth(), 1)).slice(0, 10);
   $('#custom-report [name=to]').value = toLocalInput(now).slice(0, 10);
@@ -739,5 +741,23 @@ async function init() {
 init().catch((err) => toast(err.message));
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // When a new version has been installed, reload once so it's used straight away.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded && !$('#edit-dialog').open) {
+      reloaded = true;
+      window.location.reload();
+    }
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => {
+        reg.update();
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') reg.update();
+        });
+      })
+      .catch(() => {});
+  });
 }
