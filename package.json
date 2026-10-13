@@ -10,7 +10,8 @@
     "vendor": "cp node_modules/exceljs/dist/exceljs.bare.min.js public/vendor/exceljs.min.js"
   },
   "devDependencies": {
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2"
   },
   "license": "MIT"
 }

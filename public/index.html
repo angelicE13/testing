@@ -22,19 +22,62 @@
     <!-- Log -->
     <section id="view-log" class="view">
       <div id="backup-nag"></div>
+      <div id="odo-check"></div>
       <div id="active-trip"></div>
       <div id="new-trip"></div>
       <div id="stats"></div>
     </section>
 
     <!-- History -->
+    <section id="view-expenses" class="view hidden">
+      <button class="btn primary huge" type="button" id="add-expense">+ Add expense</button>
+      <div class="card breakdown" id="expense-summary"></div>
+      <div class="history-bar"><strong>Recent</strong><button class="link" type="button" id="all-expenses">See all in History</button></div>
+      <div id="expense-recent"></div>
+    </section>
+
     <section id="view-history" class="view hidden">
+      <div class="seg history-switch" id="history-switch">
+        <button type="button" data-hist="mileage" class="on">Mileage</button>
+        <button type="button" data-hist="expenses">Expenses</button>
+      </div>
+      <div id="hist-expenses" class="hidden">
+        <div class="history-filters">
+          <input type="search" id="expense-search" placeholder="Search supplier, category or notes" autocomplete="off">
+          <div class="filter-row">
+            <div class="chips" id="expense-group">
+              <button type="button" data-group="all" class="on">All</button>
+              <button type="button" data-group="car">Car</button>
+              <button type="button" data-group="travel">Tolls</button>
+              <button type="button" data-group="clothing">Clothing</button>
+            </div>
+            <select id="expense-month" aria-label="Month"></select>
+          </div>
+        </div>
+        <div class="history-bar"><span class="muted" id="expense-count"></span></div>
+        <p class="muted hint">Swipe left to delete. Tap to edit or see the receipt.</p>
+        <div id="expense-list"></div>
+      </div>
+      <div id="hist-mileage">
+      <div class="history-filters" id="history-filters">
+        <input type="search" id="history-search" placeholder="Search client or purpose" autocomplete="off">
+        <div class="filter-row">
+          <div class="chips" id="history-type">
+            <button type="button" data-type="all" class="on">All</button>
+            <button type="button" data-type="abn">ABN</button>
+            <button type="button" data-type="tfn">TFN</button>
+            <button type="button" data-type="personal">Personal</button>
+          </div>
+          <select id="history-month" aria-label="Month"></select>
+        </div>
+      </div>
       <div class="history-bar">
         <span class="muted" id="history-count"></span>
         <button class="link danger-link" type="button" id="clear-all">Clear all</button>
       </div>
-      <p class="muted hint" id="swipe-hint">Swipe a trip left to delete it. Tap it to edit.</p>
+      <p class="muted hint" id="swipe-hint">Swipe left to delete, swipe right to repeat. Tap to edit.</p>
       <div id="history"></div>
+      </div>
     </section>
 
     <!-- Reports -->
@@ -51,6 +94,7 @@
           <button type="button" data-create="range" class="on">Date range</button>
           <button type="button" data-create="logbook">Logbook</button>
           <button type="button" data-create="fy">Fin. year</button>
+          <button type="button" data-create="tax">Tax pack</button>
         </div>
         <form id="custom-report" data-panel="range">
           <div class="row">
@@ -66,11 +110,24 @@
           <p class="muted small">For the ATO logbook method. Create it any time to check progress, then rebuild it (↻)
             when the 12 weeks are over. A logbook is valid for 5 years.</p>
         </form>
+        <form id="tax-form" data-panel="tax" class="hidden">
+          <p class="muted small">Everything your accountant needs for one financial year in a single zip file: the mileage
+            &amp; expenses workbook, your ATO logbook, a summary and all receipt photos.</p>
+          <label>Financial year<select name="fy"></select></label>
+          <button class="btn primary big" type="submit">Create tax pack</button>
+        </form>
         <form id="fy-form" data-panel="fy" class="hidden">
           <label>Financial year<select name="fy"></select></label>
           <button class="btn primary big" type="submit">Create summary</button>
         </form>
       </div>
+
+      <details class="card fold" id="clients-fold">
+        <summary>Clients <span class="muted" id="clients-summary"></span></summary>
+        <p class="muted">Tidy up names so reports group trips correctly. Renaming a client to a name that already
+          exists merges the two.</p>
+        <div id="client-list"></div>
+      </details>
 
       <details class="card fold">
         <summary>Car details <span class="muted" id="car-summary"></span></summary>
@@ -92,11 +149,11 @@
         <summary>Backup &amp; restore <span class="muted" id="backup-summary"></span></summary>
         <p class="muted">Your trips are stored only on this phone. Each night after 10pm the app reminds you to save
           a backup file. Save it to the same place each time (e.g. iCloud Drive or Google Drive) and choose
-          <strong>Replace</strong> — it's always called <em>mileage-backup.json</em>, so you keep one up-to-date copy.</p>
+          <strong>Replace</strong> — it's always called <em>mileage-backup.zip</em> (trips, expenses and receipt photos), so you keep one up-to-date copy.</p>
         <p class="muted" id="backup-info"></p>
         <div class="row">
           <button class="btn primary" type="button" data-backup>Save backup</button>
-          <label class="btn file-btn">Restore backup<input type="file" id="restore" accept="application/json,.json"></label>
+          <label class="btn file-btn">Restore backup<input type="file" id="restore" accept=".zip,.json,application/zip,application/json"></label>
         </div>
         <p class="muted" id="snapshot-info"></p>
         <button class="btn" type="button" id="restore-snapshot" hidden>Go back to last night's copy</button>
@@ -116,6 +173,7 @@
 
   <nav class="tabs" id="tabs">
     <button data-view="log" class="active" type="button"><span aria-hidden="true">＋</span>Log</button>
+    <button data-view="expenses" type="button"><span aria-hidden="true">$</span>Expenses</button>
     <button data-view="history" type="button"><span aria-hidden="true">☰</span>History</button>
     <button data-view="reports" type="button"><span aria-hidden="true">⇩</span>Reports</button>
   </nav>
@@ -127,6 +185,47 @@
     </div>
     <div id="edit-form"></div>
   </dialog>
+
+  <dialog id="expense-dialog">
+    <div class="dialog-head">
+      <h2>Add expense</h2>
+      <button class="link" type="button" data-close>Close</button>
+    </div>
+    <form id="expense-form" novalidate>
+      <div class="amount-wrap"><span>$</span>
+        <input class="big-number" name="amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" aria-label="Amount">
+      </div>
+      <div class="cat-grid" id="cat-grid"></div>
+      <div id="for-row" class="hidden">
+        <div class="label">This is for</div>
+        <div class="seg" id="applies-seg">
+          <button type="button" data-for="abn">ABN</button>
+          <button type="button" data-for="tfn">TFN</button>
+          <button type="button" data-for="personal">Personal</button>
+        </div>
+      </div>
+      <p class="muted small hidden" id="car-note">Car costs are shared: your business-use % (from the ATO logbook) is claimed, split ABN/TFN by business km.</p>
+      <div class="photo-box">
+        <img id="photo-preview" class="hidden" alt="Receipt photo — tap to enlarge">
+        <div class="photo-actions">
+          <label class="btn primary"><span id="photo-label-text">📷 Add receipt photo</span><input type="file" id="photo-input" accept="image/*" hidden></label>
+          <button class="link danger-link hidden" type="button" id="photo-remove">Remove photo</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Date<input type="date" name="date"></label>
+        <label>Supplier<input name="supplier" autocomplete="off" placeholder="e.g. BP"></label>
+      </div>
+      <div class="chips" id="supplier-chips"></div>
+      <label id="odo-row" class="hidden">Odometer (optional)<input name="odometer" type="number" inputmode="decimal" step="0.1" min="0"></label>
+      <label>Notes (optional)<textarea name="notes" rows="2"></textarea></label>
+      <p class="error" id="expense-error"></p>
+      <button class="btn primary huge" type="submit" id="expense-save">Save expense</button>
+      <button class="btn danger big hidden" type="button" id="expense-delete" style="margin-top:8px">Delete expense</button>
+    </form>
+  </dialog>
+
+  <dialog id="photo-viewer" class="photo-viewer"><img id="photo-full" alt="Receipt"></dialog>
 
   <dialog id="clear-dialog" class="center-dialog">
     <h2>Clear all trips?</h2>
@@ -141,6 +240,7 @@
   <div id="toast" role="status" aria-live="polite"><span id="toast-text"></span><button class="link" type="button" id="toast-action"></button></div>
   <datalist id="clients"></datalist>
   <script src="vendor/exceljs.min.js" defer></script>
+  <script src="vendor/jszip.min.js" defer></script>
   <script src="app.js" type="module"></script>
 </body>
 </html>

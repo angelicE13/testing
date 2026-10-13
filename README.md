@@ -17,35 +17,58 @@ home screen. After the first visit it works with no signal.
 
 ## Features
 
-- **Start a trip with one tap:** Business ABN, Business TFN, Personal, To work or To home.
-  The time and start odometer are filled in for you (tap *Change* if the
-  odometer is different).
-- **Finish with one number:** type the end odometer, or switch to *Trip
-  distance* and type the km. Then tap *Finish trip*. The app remembers which
-  one you prefer.
-- **Clients:** for business trips, tap a recent client or type a new one. You
-  can do this any time before finishing. If you leave one client and drive
-  straight to the next, it's marked as *between clients* automatically.
-- **+ Add a past trip** is the full form, for trips you forgot to log.
-- **History:** tap a trip to edit or delete it.
-- **Breakdown on the home screen** for this week, month, quarter or financial
-  year:
-  - business % vs personal % of all km
-  - ABN % vs TFN % of business km
-- **Reports** (Excel + CSV), each with odometer start/end, car details and the
-  same percentages:
-  - weekly, monthly and quarterly
-  - **financial year** (1 Jul – 30 Jun)
-  - between-clients trips show both ends, e.g. *Acme (ABN) → Blue Co (TFN)*
+### Log (mileage)
+- **Start a trip with one tap:** Business ABN, Business TFN, To work, To home or
+  Personal. The time and start odometer are filled in for you.
+- **Finish with one number:** the end odometer or the trip distance.
+  *Same as last time* suggests the usual distance for that route.
+- **Clients:** tap a recent client or type one. Driving straight from one
+  client to the next is marked *between clients* automatically, with ABN/TFN
+  shown at both ends in reports.
+- **Reminders:** "still driving?" if a trip has been open for 3+ hours, and a
+  **weekly odometer check** that finds unlogged km and can log them as personal.
+- **Breakdown** for the week, month, quarter or financial year: business vs
+  personal %, and ABN vs TFN % of business.
 
-  Reports are created when the period ends: at 12 AM if the app is open,
-  otherwise the next time you open it. Missed periods are caught up.
-- **ATO 12-week logbook:** pick a start date. The report shows the logbook
-  period, odometer at start and end, total km by odometer (unlogged km counted
-  as private) and your **business-use %**.
-- **Car details** (make, model, engine capacity, rego) are printed on every report.
-- **Backup / restore:** saves a `.json` file with all your trips. The app
-  reminds you if you haven't backed up for 2 weeks.
+### Expenses
+- Amount, category, ABN/TFN/Personal, supplier (recent suppliers suggested),
+  optional odometer and a **receipt photo**. Photos are shrunk to about
+  150–350 KB and stay readable.
+- Categories:
+  - **Car:** petrol, service, repairs, parts, tyres, car wash, registration,
+    insurance
+  - **Tolls & parking**
+  - **Clothing / uniform** and **laundry**
+- **Estimated claimable** amounts for ABN and TFN:
+  - car costs × business-use % from the ATO logbook, split ABN/TFN by
+    business km
+  - plus tolls, clothing and laundry tagged ABN/TFN
+
+### History
+- Separate **Mileage** and **Expenses** histories, each with search and filters.
+- Swipe left to delete (with Undo). Swipe a trip right to **repeat** it.
+  Tap to edit.
+- **Clear all**, with an offer to back up first.
+
+### Reports
+- Weekly, monthly, quarterly and **financial-year** reports are created
+  automatically when each period ends.
+- Each report (Excel + CSV) includes:
+  - trips, odometer start/end, car details
+  - business/personal and ABN/TFN percentages
+  - an **Expenses** sheet with claimable estimates
+  - a **Receipts** zip of that period's photos
+- **ATO 12-week logbook** with business-use %.
+- **Tax pack:** one zip per financial year with the workbook, the logbook, a
+  summary and all receipt photos, ready for your accountant.
+- **Clients:** rename or merge names, for example "ACME" → "Acme Pty Ltd".
+
+### Backup
+- Each night at 10pm (or the next time you open the app), a copy is kept
+  inside the app. *Go back to last night's copy* undoes mistakes.
+- A one-tap reminder saves **mileage-backup.zip** (trips, expenses and photos).
+  Choose *Replace* to keep one up-to-date file. *Restore backup* loads it on
+  a new phone.
 
 > ⚠️ Because data lives only on the phone, deleting the app, clearing Safari or
 > Chrome website data, or losing the phone deletes your trips. Back up regularly.

@@ -3,7 +3,8 @@
 import {
   ValidationError, activeTrip, duePeriods, lastEndOdo, logbookPeriod, makeReport, normaliseTrip, odoWarnings,
 } from './logic.js';
-import { localDate } from './periods.js';
+import { addDays, localDate } from './periods.js';
+import { attachExpenses, normaliseExpense } from './expenses.js';
 
 export class Store {
   constructor(adapter, { timeZone }) {
@@ -11,12 +12,14 @@ export class Store {
     this.timeZone = timeZone;
     this.trips = [];
     this.reports = [];
+    this.expenses = [];
     this.meta = {};
   }
 
   async load() {
     this.trips = await this.adapter.getAll('trips');
     this.reports = await this.adapter.getAll('reports');
+    this.expenses = await this.adapter.getAll('expenses');
     this.meta = Object.fromEntries((await this.adapter.getAll('meta')).map((m) => [m.key, m.value]));
     return this;
   }
@@ -96,7 +99,10 @@ export class Store {
   // ---------- reports ----------
 
   async generateReport(type, start, end, now = new Date()) {
-    const report = makeReport(this.trips, type, start, end, this.timeZone, now, this.meta.car);
+    const logbook = this.latestLogbook(end);
+    const report = makeReport(this.trips, type, start, end, this.timeZone, now, this.meta.car, {
+      addExpenses: (r) => attachExpenses(r, this.expenses, logbook),
+    });
     const existing = this.reports.find(
       (r) => r.period_type === type && r.period_start === start && r.period_end === end,
     );
@@ -114,6 +120,98 @@ export class Store {
       created.push(await this.generateReport(p.type, p.start, p.end, now));
     }
     return created;
+  }
+
+  /** Most recent ATO logbook that applies to a period ending on `end` (a logbook is valid for 5 years). */
+  latestLogbook(end) {
+    const fiveYears = addDays(end, -5 * 365);
+    const list = this.reports
+      .filter((r) => r.period_type === 'logbook' && r.logbook && r.period_start <= end && r.period_end >= fiveYears)
+      .sort((a, b) => (a.logbook.inProgress - b.logbook.inProgress) || (a.period_start < b.period_start ? 1 : -1));
+    return list[0] || null;
+  }
+
+  // ---------- expenses ----------
+
+  getExpense(id) {
+    return this.expenses.find((e) => e.id === id) || null;
+  }
+
+  async createExpense(input) {
+    const now = new Date().toISOString();
+    const row = { ...normaliseExpense(input), created_at: now, updated_at: now };
+    row.id = await this.adapter.put('expenses', row);
+    this.expenses.push(row);
+    return row;
+  }
+
+  async updateExpense(id, input) {
+    const existing = this.getExpense(id);
+    if (!existing) throw new ValidationError('Expense not found');
+    const row = { ...existing, ...normaliseExpense({ ...existing, ...input }), updated_at: new Date().toISOString() };
+    if (existing.photo_id && existing.photo_id !== row.photo_id) await this.deletePhoto(existing.photo_id);
+    await this.adapter.put('expenses', row);
+    this.expenses[this.expenses.indexOf(existing)] = row;
+    return row;
+  }
+
+  /** Deletes the expense but keeps its photo, so Undo can bring both back. */
+  async deleteExpense(id) {
+    await this.adapter.delete('expenses', id);
+    this.expenses = this.expenses.filter((e) => e.id !== id);
+  }
+
+  async restoreExpense(expense) {
+    await this.adapter.put('expenses', expense);
+    this.expenses = [...this.expenses.filter((e) => e.id !== expense.id), expense];
+  }
+
+  /** Receipt photos are stored as { id, type, data: ArrayBuffer }. */
+  async savePhoto(data, type = 'image/jpeg') {
+    return this.adapter.put('photos', { type, data });
+  }
+
+  getPhoto(id) {
+    return this.adapter.get('photos', id);
+  }
+
+  async deletePhoto(id) {
+    await this.adapter.delete('photos', id);
+  }
+
+  allPhotos() {
+    return this.adapter.getAll('photos');
+  }
+
+  /** Replaces all receipt photos (when restoring a backup). */
+  async replacePhotos(photos) {
+    await this.adapter.clear('photos');
+    for (const p of photos) await this.adapter.put('photos', p);
+  }
+
+  /** Removes photos no expense points to (e.g. after deleting an expense). */
+  async prunePhotos() {
+    const used = new Set(this.expenses.map((e) => e.photo_id).filter(Boolean));
+    for (const p of await this.allPhotos()) if (!used.has(p.id)) await this.deletePhoto(p.id);
+  }
+
+  // ---------- clients ----------
+
+  /** Renames a client on every trip. Renaming to an existing name merges the two. */
+  async renameClient(from, to) {
+    const name = String(to || '').trim();
+    if (!name) throw new ValidationError('Enter the new name');
+    const same = (v) => v && v.trim().toLowerCase() === from.trim().toLowerCase();
+    for (const t of this.trips) {
+      const change = {};
+      if (same(t.purpose)) change.purpose = name;
+      if (same(t.from_client)) change.from_client = name;
+      if (same(t.to_client)) change.to_client = name;
+      if (Object.keys(change).length) {
+        Object.assign(t, change, { updated_at: new Date().toISOString() });
+        await this.adapter.put('trips', t);
+      }
+    }
   }
 
   /** ATO 12-week logbook starting on the given date (can be made while still in progress). */
@@ -148,7 +246,10 @@ export class Store {
   // ---------- backup ----------
 
   exportData() {
-    return { app: 'mileage-logbook', version: 1, exported_at: new Date().toISOString(), trips: this.trips, reports: this.reports };
+    return {
+      app: 'mileage-logbook', version: 2, exported_at: new Date().toISOString(),
+      trips: this.trips, reports: this.reports, expenses: this.expenses, car: this.meta.car || null,
+    };
   }
 
   /** Replaces everything on this phone with a backup file's contents. */
@@ -161,17 +262,26 @@ export class Store {
     await this.adapter.clear('reports');
     for (const t of data.trips) await this.adapter.put('trips', t);
     for (const r of data.reports || []) await this.adapter.put('reports', r);
+    if (Array.isArray(data.expenses)) {
+      await this.adapter.clear('expenses');
+      for (const e of data.expenses) await this.adapter.put('expenses', e);
+    }
+    if (data.car) await this.setMeta('car', data.car);
     return this.load();
   }
 }
 
 /** Simple in-memory adapter (tests, and fallback if IndexedDB is unavailable). */
 export function memoryAdapter() {
-  const stores = { trips: new Map(), reports: new Map(), meta: new Map() };
-  const seq = { trips: 0, reports: 0 };
+  const stores = { trips: new Map(), reports: new Map(), meta: new Map(), expenses: new Map(), photos: new Map() };
+  const seq = { trips: 0, reports: 0, expenses: 0, photos: 0 };
   return {
     async getAll(name) {
       return [...stores[name].values()].map((v) => structuredClone(v));
+    },
+    async get(name, key) {
+      const v = stores[name].get(key);
+      return v === undefined ? undefined : structuredClone(v);
     },
     async put(name, value) {
       const key = name === 'meta' ? value.key : value.id ?? ++seq[name];

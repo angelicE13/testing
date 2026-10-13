@@ -259,7 +259,7 @@ export function summaryLines(report) {
   return lines;
 }
 
-function csvCell(v) {
+export function csvCell(v) {
   const s = v === null || v === undefined ? '' : String(v);
   // Prefix formula-like text so spreadsheets don't run it, then quote when needed.
   const safe = /^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s)) ? `'${s}` : s;
@@ -281,7 +281,7 @@ export function fileBase(report) {
 }
 
 /** A report is a snapshot of the trips in a period at the time it was made. */
-export function makeReport(trips, type, start, end, timeZone, now = new Date(), car = null) {
+export function makeReport(trips, type, start, end, timeZone, now = new Date(), car = null, extras = {}) {
   const inRange = tripsInRange(trips, start, end, timeZone);
   const label = periodLabel(type, start, end);
   const summary = summarise(inRange);
@@ -312,6 +312,7 @@ export function makeReport(trips, type, start, end, timeZone, now = new Date(), 
       daysElapsed: Math.max(0, Math.min(LOGBOOK_DAYS, days)),
     };
   }
+  if (extras.addExpenses) extras.addExpenses(report);
   return report;
 }
 

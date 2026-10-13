@@ -6,7 +6,13 @@ import { periodContaining, localDate } from './js/periods.js';
 import {
   summarise, tripsInRange, byStartDesc, recentClients, comingFromClient, logbookPeriod, UNIT,
 } from './js/logic.js';
-import { deliver, reportFile } from './js/files.js';
+import {
+  backupZip, countReceipts, deliver, readBackup, receiptsZip, reportFile, taxPack,
+} from './js/files.js';
+import { attachSwipe } from './js/swipe.js';
+import { setupExpenses } from './expenses-ui.js';
+
+let expensesUi;
 
 const TYPES = {
   personal: [
@@ -24,7 +30,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.13-8';
+export const APP_VERSION = '2026.10.14-1';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -365,7 +371,7 @@ function renderStart() {
           <label class="odo-edit">Odometer now
             <input type="number" inputmode="decimal" step="0.1" min="0" id="start-odo" value="${odo ?? ''}" placeholder="e.g. 45210">
           </label>`
-        : `<span>Odometer <strong>${num(odo)}</strong></span>
+        : `<div><div class="odo-label-sm">Odometer</div><div class="odo-big">${num(odo)} <span>${unit()}</span></div></div>
            <button class="link" type="button" id="change-odo">Change</button>`}
       </div>
       <h2 class="quick-title">Tap to start a trip</h2>
@@ -427,6 +433,8 @@ function renderActive() {
   const client = t.between_clients ? t.to_client : t.purpose;
   const byDistance = prefs('endByDistance', false);
   const clients = recentClients(store.trips).filter((c) => c !== t.from_client);
+  const usual = usualDistance(t);
+  const hours = (Date.now() - new Date(t.start_at)) / 3600000;
 
   host.innerHTML = `
     <div class="quick active-trip">
@@ -434,9 +442,11 @@ function renderActive() {
         <span class="pulse"></span>
         <div>
           <div class="trip-type">${esc(QUICK_LABEL[t.trip_type])}</div>
-          <div class="muted">Started ${esc(time(t.start_at))} · odometer ${num(t.start_odo)}</div>
+          <div class="muted">Started ${esc(dayKey(t.start_at) === dayKey(new Date()) ? time(t.start_at) : `${dayLabel(t.start_at)}, ${time(t.start_at)}`)} · odometer ${num(t.start_odo)}</div>
         </div>
       </div>
+      ${hours >= 3 ? `<div class="warn">This trip started ${Math.floor(hours)} hours ago — did you forget to finish it?
+        Enter the end odometer below, then fix the end time in <strong>Edit</strong> if needed.</div>` : ''}
 
       ${business ? `
         <div class="client-box">
@@ -458,6 +468,7 @@ function renderActive() {
         </div>
         <input class="big-number" id="end-value" type="number" inputmode="decimal" step="0.1" min="0"
           placeholder="${byDistance ? `${unit()} driven` : `more than ${num(t.start_odo)}`}">
+        ${usual ? `<button class="chip-suggest" type="button" id="use-usual">Same as last time: ${num(usual)} ${unit()}</button>` : ''}
         <div class="total-line" id="end-total"></div>
       </div>
       <p class="error" id="end-error"></p>
@@ -475,6 +486,10 @@ function renderActive() {
     if (!Number.isFinite(v)) return null;
     return byDistance ? { end: round1(t.start_odo + v), dist: round1(v) } : { end: round1(v), dist: round1(v - t.start_odo) };
   };
+  $('#use-usual')?.addEventListener('click', () => {
+    input.value = byDistance ? usual : round1(t.start_odo + usual);
+    input.dispatchEvent(new Event('input'));
+  });
   input.addEventListener('input', () => {
     $('#end-error').textContent = '';
     const v = values();
@@ -536,9 +551,70 @@ function renderActive() {
   });
 }
 
+// Once a week, compare the real odometer with the logbook so missed km are caught early.
+const ODO_CHECK_DAYS = 7;
+
+function odoCheckDue() {
+  if (!store.trips.length || state.active || state.lastEndOdo === null) return false;
+  const since = store.meta.odoCheckAt || store.trips.map((t) => t.created_at).sort()[0];
+  return Date.now() - new Date(since) > ODO_CHECK_DAYS * 86400000;
+}
+
+function renderOdoCheck() {
+  const host = $('#odo-check');
+  if (!odoCheckDue()) { host.innerHTML = ''; return; }
+  host.innerHTML = `
+    <div class="warn odo-check">
+      <strong>Weekly odometer check</strong> — what does the car's odometer show right now?
+      <div class="odo-check-row">
+        <input type="number" inputmode="decimal" step="0.1" min="0" id="odo-check-value" placeholder="${num(state.lastEndOdo)}">
+        <button class="btn small primary" type="button" id="odo-check-go">Check</button>
+        <button class="link" type="button" id="odo-check-skip">Skip</button>
+      </div>
+      <div id="odo-check-result"></div>
+    </div>`;
+  const done = async (msg) => {
+    await store.setMeta('odoCheckAt', new Date().toISOString());
+    if (msg) toast(msg);
+    renderOdoCheck();
+  };
+  $('#odo-check-skip').addEventListener('click', () => done());
+  $('#odo-check-go').addEventListener('click', async () => {
+    const reading = parseFloat($('#odo-check-value').value);
+    if (!Number.isFinite(reading)) return;
+    const diff = round1(reading - state.lastEndOdo);
+    const result = $('#odo-check-result');
+    if (Math.abs(diff) <= 1) { await done('Odometer matches your logbook 👍'); return; }
+    if (diff < 0) {
+      result.innerHTML = `<p>That's ${num(-diff)} ${unit()} <em>less</em> than where your last trip ended (${num(state.lastEndOdo)}).
+        Check your recent trips in History for a typo.</p><button class="link" type="button" id="odo-ok">OK</button>`;
+      $('#odo-ok').addEventListener('click', () => done());
+      return;
+    }
+    result.innerHTML = `<p><strong>${num(diff)} ${unit()}</strong> haven't been logged since your last trip.</p>
+      <div class="odo-check-row">
+        <button class="btn small" type="button" id="odo-personal">Log as personal</button>
+        <button class="btn small" type="button" id="odo-past">Add the trip(s)</button>
+        <button class="link" type="button" id="odo-ignore">Ignore</button>
+      </div>`;
+    $('#odo-personal').addEventListener('click', async () => {
+      const now = new Date().toISOString();
+      await store.createTrip({
+        category: 'personal', trip_type: 'personal_travel', purpose: 'Unlogged travel (weekly odometer check)',
+        start_at: now, end_at: now, start_odo: state.lastEndOdo, end_odo: reading,
+      });
+      await done(`Logged ${num(diff)} ${unit()} as personal`);
+      await refresh();
+    });
+    $('#odo-past').addEventListener('click', async () => { await done(); openPast(); });
+    $('#odo-ignore').addEventListener('click', () => done());
+  });
+}
+
 function renderLog() {
   renderStats();
   renderBackupNag();
+  renderOdoCheck();
   renderActive();
   if (state.active) $('#new-trip').innerHTML = '';
   else renderStart();
@@ -555,18 +631,43 @@ function openPast() {
 }
 
 // ---------- History view ----------
+const historyFilter = { q: '', type: 'all', month: 'all' };
+
+function filteredTrips() {
+  const q = historyFilter.q.trim().toLowerCase();
+  return state.trips.filter((t) => {
+    if (historyFilter.type === 'personal' ? t.category !== 'personal' : historyFilter.type !== 'all' && t.trip_type !== historyFilter.type) return false;
+    if (historyFilter.month !== 'all' && dayKey(t.start_at).slice(0, 7) !== historyFilter.month) return false;
+    if (q && ![t.purpose, t.from_client, t.to_client, t.notes, TYPE_LABEL[t.trip_type]].some((v) => v && v.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
 function renderHistory() {
   const host = $('#history');
   const n = state.trips.length;
-  $('#history-count').textContent = n ? `${n} trip${n === 1 ? '' : 's'}` : '';
+  $('#history-filters').hidden = n < 2;
+  const months = [...new Set(state.trips.map((t) => dayKey(t.start_at).slice(0, 7)))];
+  if (historyFilter.month !== 'all' && !months.includes(historyFilter.month)) historyFilter.month = 'all';
+  $('#history-month').innerHTML = `<option value="all">All months</option>${months.map((m) => `<option value="${m}" ${m === historyFilter.month ? 'selected' : ''}>${
+    new Date(`${m}-01T00:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</option>`).join('')}`;
+  $$('#history-type [data-type]').forEach((b) => b.classList.toggle('on', b.dataset.type === historyFilter.type));
+  const list = filteredTrips();
+  const km = round1(list.reduce((a, t) => a + (t.distance || 0), 0));
+  $('#history-count').textContent = !n ? '' : list.length === n ? `${n} trip${n === 1 ? '' : 's'} · ${num(km)} ${unit()}`
+    : `${list.length} of ${n} trips · ${num(km)} ${unit()}`;
   $('#clear-all').hidden = !n;
   $('#swipe-hint').hidden = !n;
   if (!n) {
     host.innerHTML = '<p class="empty">No trips yet. Log your first one from the Log tab.</p>';
     return;
   }
+  if (!list.length) {
+    host.innerHTML = '<p class="empty">No trips match.</p>';
+    return;
+  }
   const groups = new Map();
-  for (const t of state.trips) {
+  for (const t of list) {
     const k = dayKey(t.start_at);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(t);
@@ -580,8 +681,9 @@ function renderHistory() {
         const end = t.end_odo === null ? 'in progress' : `${num(t.start_odo)} → ${num(t.end_odo)}`;
         return `
           <div class="swipe" data-id="${t.id}">
-            <button class="swipe-delete" type="button" data-delete="${t.id}" tabindex="-1">Delete</button>
-            <button class="trip ${t.category}" type="button" data-id="${t.id}">
+            ${t.end_odo !== null ? '<button class="swipe-right-action" type="button" tabindex="-1">Repeat</button>' : ''}
+            <button class="swipe-left-action" type="button" tabindex="-1">Delete</button>
+            <button class="trip swipe-card ${t.category}" type="button">
               <span class="what">${esc(what)}</span>
               <span class="km">${t.distance === null ? '…' : `${num(t.distance)} ${unit()}`}</span>
               <span class="meta">${esc(TYPE_LABEL[t.trip_type])} · ${esc(time(t.start_at))}${t.end_at ? `–${esc(time(t.end_at))}` : ''}</span>
@@ -608,67 +710,71 @@ async function deleteWithUndo(id) {
   });
 }
 
-// Swipe a trip left to reveal Delete. Vertical movement still scrolls the list.
-const SWIPE_OPEN = 96;
-let swipe = null;
-let suppressClick = false;
-
-function closeSwipes(except) {
-  $$('#history .swipe.open').forEach((row) => {
-    if (row === except) return;
-    row.classList.remove('open');
-    $('.trip', row).style.transform = '';
-  });
+function showHistoryPane() {
+  const pane = prefs('historyPane', 'mileage');
+  $$('#history-switch [data-hist]').forEach((b) => b.classList.toggle('on', b.dataset.hist === pane));
+  $('#hist-mileage').classList.toggle('hidden', pane !== 'mileage');
+  $('#hist-expenses').classList.toggle('hidden', pane !== 'expenses');
 }
-
-$('#history').addEventListener('pointerdown', (e) => {
-  const card = e.target.closest('.trip');
-  if (!card) return;
-  const row = card.parentElement;
-  swipe = { row, card, x: e.clientX, y: e.clientY, base: row.classList.contains('open') ? -SWIPE_OPEN : 0, dx: 0, active: false };
-});
-
-$('#history').addEventListener('pointermove', (e) => {
-  if (!swipe) return;
-  const dx = e.clientX - swipe.x;
-  const dy = e.clientY - swipe.y;
-  if (!swipe.active) {
-    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // scrolling
-    if (Math.abs(dx) < 8) return;
-    swipe.active = true;
-    closeSwipes(swipe.row);
-    swipe.row.classList.add('dragging');
-    swipe.card.style.transition = 'none';
-  }
-  swipe.dx = dx;
-  const x = Math.min(0, Math.max(-SWIPE_OPEN * 1.4, swipe.base + dx));
-  swipe.card.style.transform = `translateX(${x}px)`;
-});
-
-function endSwipe() {
-  if (!swipe) return;
-  const { row, card, active, base, dx } = swipe;
-  swipe = null;
-  if (!active) return;
-  suppressClick = true;
-  row.classList.remove('dragging');
-  card.style.transition = '';
-  const open = base + dx < -SWIPE_OPEN / 2;
-  row.classList.toggle('open', open);
-  card.style.transform = open ? `translateX(${-SWIPE_OPEN}px)` : '';
-}
-$('#history').addEventListener('pointerup', endSwipe);
-$('#history').addEventListener('pointercancel', endSwipe);
-
-$('#history').addEventListener('click', (e) => {
-  if (suppressClick) { suppressClick = false; return; }
-  const del = e.target.closest('[data-delete]');
-  if (del) { deleteWithUndo(Number(del.dataset.delete)); return; }
-  const b = e.target.closest('.trip');
+$('#history-switch').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-hist]');
   if (!b) return;
-  if (b.parentElement.classList.contains('open')) { closeSwipes(); return; }
-  closeSwipes();
-  openEdit(state.trips.find((t) => t.id === Number(b.dataset.id)));
+  setPref('historyPane', b.dataset.hist);
+  showHistoryPane();
+  window.scrollTo(0, 0);
+});
+$('#all-expenses').addEventListener('click', () => { setPref('historyPane', 'expenses'); show('history'); });
+
+$('#history-search').addEventListener('input', (e) => { historyFilter.q = e.target.value; renderHistory(); });
+$('#history-month').addEventListener('change', (e) => { historyFilter.month = e.target.value; renderHistory(); });
+$('#history-type').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-type]');
+  if (!b) return;
+  historyFilter.type = b.dataset.type;
+  renderHistory();
+});
+
+/** Start a new trip like an earlier one: same type and client, starting now from the current odometer. */
+async function repeatTrip(id) {
+  const t = store.getTrip(id);
+  if (!t) return;
+  if (store.activeTrip()) { toast('Finish the current trip first'); return; }
+  const startOdo = store.lastEndOdo() ?? t.end_odo;
+  const startAt = new Date().toISOString();
+  const destination = t.between_clients ? t.to_client : t.purpose;
+  const from = t.category === 'business' ? comingFromClient(store.trips, startOdo, startAt, TIME_ZONE) : { client: '', type: '' };
+  const between = Boolean(from.client) && from.client !== destination;
+  try {
+    await store.createTrip({
+      category: t.category,
+      trip_type: t.trip_type,
+      start_at: startAt,
+      start_odo: startOdo,
+      purpose: between ? '' : destination,
+      between_clients: between,
+      from_client: between ? from.client : '',
+      from_type: between ? from.type : '',
+      to_client: between ? destination : '',
+    });
+    toast('Trip started — drive safe');
+    show('log');
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+/** Distance of the last finished trip with the same type, destination and starting client. */
+function usualDistance(t) {
+  const dest = (x) => (x.between_clients ? x.to_client : x.purpose) || '';
+  const match = [...store.trips].sort(byStartDesc).find((x) => x.id !== t.id && x.end_odo !== null
+    && x.trip_type === t.trip_type && dest(x) === dest(t) && (x.from_client || '') === (t.from_client || ''));
+  return match ? match.distance : null;
+}
+
+attachSwipe($('#history'), {
+  onTap: (id) => openEdit(state.trips.find((t) => t.id === id)),
+  onLeftAction: (id) => deleteWithUndo(id),
+  onRightAction: (id) => repeatTrip(id),
 });
 
 // Clear everything (asks first, offers a backup)
@@ -707,6 +813,8 @@ function openEdit(trip) {
 $('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog').close());
 
 // ---------- Reports view ----------
+const money = (n) => `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const REPORT_BADGE = {
   weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Fin. year', logbook: 'ATO logbook', custom: 'Custom',
 };
@@ -730,16 +838,19 @@ function renderReports() {
   const shown = reports.filter((r) => filter === 'all' || r.period_type === filter);
   host.innerHTML = shown.map((r) => {
     const s = r.summary;
+    const receipts = countReceipts(store, r.period_start, r.period_end);
     return `
       <div class="report-row">
         <div class="report-main">
           <div class="report-title"><strong>${esc(r.label)}</strong>${filter === 'all' ? `<span class="badge">${REPORT_BADGE[r.period_type]}</span>` : ''}</div>
           <div class="muted">${num(s.total)} ${unit()} · Business ${s.businessPercent}% (ABN ${s.abnPercent}% · TFN ${s.tfnPercent}%) · Personal ${s.personalPercent}%</div>
           ${r.logbook ? `<div class="muted"><strong>ATO business-use ${r.logbook.businessUsePercent}%</strong>${r.logbook.inProgress ? ` · day ${r.logbook.daysElapsed} of 84` : ''}</div>` : ''}
+          ${r.expenses?.summary.count ? `<div class="muted">Expenses ${money(r.expenses.summary.total)} · est. claimable ABN ${money(r.expenses.summary.claimable.abn)} · TFN ${money(r.expenses.summary.claimable.tfn)}</div>` : ''}
         </div>
         <div class="actions">
           <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
           <button class="btn small" type="button" data-file="csv" data-id="${r.id}">CSV</button>
+          ${receipts ? `<button class="btn small" type="button" data-receipts="${r.id}">Receipts (${receipts})</button>` : ''}
           <button class="btn small" type="button" data-regen="${r.id}" title="Rebuild with latest trips" aria-label="Rebuild report">↻</button>
         </div>
       </div>`;
@@ -771,7 +882,10 @@ $('#reports').addEventListener('click', async (e) => {
   if (!b) return;
   b.disabled = true;
   try {
-    if (b.dataset.file) {
+    if (b.dataset.receipts) {
+      const report = store.reports.find((r) => r.id === Number(b.dataset.receipts));
+      await deliver(await receiptsZip(store, report));
+    } else if (b.dataset.file) {
       const report = store.reports.find((r) => r.id === Number(b.dataset.id));
       await deliver(await reportFile(report, b.dataset.file));
     } else if (b.dataset.regen) {
@@ -803,6 +917,42 @@ $('#custom-report').addEventListener('submit', async (e) => {
   return undefined;
 });
 
+// ---------- clients ----------
+function clientCounts() {
+  const counts = new Map();
+  for (const t of store.trips) {
+    if (t.category !== 'business') continue;
+    for (const n of new Set([t.purpose, t.from_client, t.to_client].filter(Boolean))) counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function renderClientList() {
+  const list = clientCounts();
+  $('#clients-summary').textContent = list.length ? String(list.length) : 'none yet';
+  $('#client-list').innerHTML = list.length
+    ? list.map(([name, n]) => `
+      <div class="client-row"><span>${esc(name)} <span class="muted">· ${n} trip${n === 1 ? '' : 's'}</span></span>
+        <button class="link" type="button" data-rename="${esc(name)}">Rename</button></div>`).join('')
+    : '<p class="muted">Clients appear here after your first business trip.</p>';
+}
+
+$('#client-list').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-rename]');
+  if (!b) return;
+  const from = b.dataset.rename;
+  const to = prompt(`Rename "${from}" to:`, from);
+  if (to === null || to.trim() === from) return;
+  try {
+    await store.renameClient(from, to);
+    toast(`Renamed to "${to.trim()}" — rebuild (↻) reports to update them`);
+    renderClientList();
+    await refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
 // ---------- car details, ATO logbook, financial year ----------
 function renderReportForms() {
   const car = store.meta.car || {};
@@ -820,6 +970,9 @@ function renderReportForms() {
   const first = store.trips.length
     ? Number(periodContaining('financial_year', store.trips.map((t) => localDate(t.start_at, TIME_ZONE)).sort()[0]).start.slice(0, 4))
     : current;
+  const options = Array.from({ length: current - first + 1 }, (_, i) => current - i)
+    .map((y) => `<option value="${y}">FY${y}-${String(y + 1).slice(2)} (Jul ${y} – Jun ${y + 1})</option>`).join('');
+  $('#tax-form').elements.fy.innerHTML = options;
   const sel = $('#fy-form').elements.fy;
   sel.innerHTML = Array.from({ length: current - first + 1 }, (_, i) => current - i)
     .map((y) => `<option value="${y}">FY${y}-${String(y + 1).slice(2)} (Jul ${y} – Jun ${y + 1})</option>`).join('');
@@ -868,13 +1021,31 @@ $('#fy-form').addEventListener('submit', async (e) => {
   }
 });
 
+$('#tax-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const y = Number(e.target.elements.fy.value);
+  const btn = $('button[type=submit]', e.target);
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const fyReport = await store.generateReport('financial_year', `${y}-07-01`, `${y + 1}-06-30`);
+    renderReports();
+    await deliver(await taxPack(store, fyReport, store.latestLogbook(fyReport.period_end)));
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create tax pack';
+  }
+});
+
 // ---------- backup ----------
 // Every night at 10pm (or the next time the app is opened after that):
 //  1. an automatic copy is kept inside the app, replacing the previous night's copy;
 //  2. a reminder offers a one-tap backup file. It always has the same name, so saving it
 //     to the same folder replaces the previous file instead of piling up copies.
 const BACKUP_HOUR = 22;
-const BACKUP_FILE = 'mileage-backup.json';
+const BACKUP_FILE = 'mileage-backup.zip';
 
 /** The most recent 10pm that has passed. */
 function lastBackupTime(now = new Date()) {
@@ -889,7 +1060,7 @@ const before = (iso, t) => !iso || new Date(iso) < t;
 function backupDue() {
   const t = lastBackupTime();
   const last = store.meta.lastBackupAt;
-  const unsavedBefore10pm = store.trips.some((x) => {
+  const unsavedBefore10pm = [...store.trips, ...store.expenses].some((x) => {
     const changed = x.updated_at || x.created_at;
     return (!last || changed > last) && new Date(changed) < t;
   });
@@ -897,7 +1068,7 @@ function backupDue() {
 }
 
 async function nightlySnapshot() {
-  if (!store.trips.length || !before(store.meta.snapshotAt, lastBackupTime())) return;
+  if (!(store.trips.length || store.expenses.length) || !before(store.meta.snapshotAt, lastBackupTime())) return;
   await store.setMeta('snapshot', structuredClone(store.exportData()));
   await store.setMeta('snapshotAt', new Date().toISOString());
 }
@@ -934,9 +1105,7 @@ function renderBackupInfo() {
 }
 
 async function backup() {
-  const data = JSON.stringify(store.exportData(), null, 1);
-  const file = new File([data], BACKUP_FILE, { type: 'application/json' });
-  const result = await deliver(file);
+  const result = await deliver(await backupZip(store, BACKUP_FILE));
   if (result !== 'cancelled') {
     await store.setMeta('lastBackupAt', new Date().toISOString());
     toast('Backup saved');
@@ -952,6 +1121,7 @@ $('#restore-snapshot').addEventListener('click', async () => {
   if (!confirm(`Go back to the nightly copy from ${when(store.meta.snapshotAt)}? Trips added or changed since then will be lost.`)) return;
   await store.importData(snap);
   toast(`Restored ${store.trips.length} trips`);
+  expensesUi.render();
   renderBackupInfo();
   await refresh();
 });
@@ -972,10 +1142,13 @@ $('#restore').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (!confirm('Replace ALL trips on this phone with the backup? This cannot be undone.')) return;
+  if (!confirm('Replace ALL trips and expenses on this phone with the backup? This cannot be undone.')) return;
   try {
-    await store.importData(JSON.parse(await file.text()));
-    toast(`Restored ${store.trips.length} trips`);
+    const { data, photos } = await readBackup(file);
+    await store.importData(data);
+    if (photos.length || data.version >= 2) await store.replacePhotos(photos);
+    toast(`Restored ${store.trips.length} trips and ${store.expenses.length} expenses`);
+    expensesUi.render();
     renderBackupInfo();
     await refresh();
   } catch (err) {
@@ -1008,15 +1181,16 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------- navigation ----------
-const TITLES = { log: 'Log trip', history: 'History', reports: 'Reports' };
+const TITLES = { log: 'Log trip', expenses: 'Expenses', history: 'History', reports: 'Reports' };
 
 function show(view) {
   state.view = view;
   $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${view}`));
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('#title').textContent = TITLES[view];
-  if (view === 'history') renderHistory();
-  if (view === 'reports') { renderReports(); renderReportForms(); renderBackupInfo(); }
+  if (view === 'history') { renderHistory(); expensesUi.render(); showHistoryPane(); }
+  if (view === 'expenses') expensesUi.render();
+  if (view === 'reports') { renderReports(); renderReportForms(); renderClientList(); renderBackupInfo(); }
   if (view === 'log') refresh();
   window.scrollTo(0, 0);
 }
@@ -1035,6 +1209,11 @@ async function init() {
     toast('This browser cannot store data — trips will be lost when you close it.');
   }
   store = await new Store(adapter, { timeZone: TIME_ZONE }).load();
+  store.prunePhotos().catch(() => {}); // receipts of expenses deleted last session
+  expensesUi = setupExpenses({
+    getStore: () => store, timeZone: TIME_ZONE, $, $$, esc, prefs, setPref, toast,
+    onChange: () => renderBackupNag(),
+  });
   // Ask the browser not to clear our data when the phone is low on space.
   navigator.storage?.persist?.().catch(() => {});
 

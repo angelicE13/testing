@@ -150,3 +150,53 @@ test('financial year report is due after 30 June', async () => {
   assert.equal(fy.period_start, '2025-07-01');
   assert.equal(fy.label, 'FY2025-26 (1 Jul 2025 – 30 Jun 2026)');
 });
+
+// ---------- expenses ----------
+import { summariseExpenses, normaliseExpense, receiptName } from '../public/js/expenses.js';
+
+test('expenses: validation', () => {
+  assert.throws(() => normaliseExpense({ amount: 0, category: 'fuel', date: '2026-10-01' }), /amount/);
+  assert.throws(() => normaliseExpense({ amount: 10, category: 'nope', date: '2026-10-01' }), /category/);
+  assert.throws(() => normaliseExpense({ amount: 10, category: 'laundry', date: '2026-10-01' }), /ABN, TFN or Personal/);
+  const car = normaliseExpense({ amount: '45.206', category: 'fuel', date: '2026-10-01', applies_to: 'tfn' });
+  assert.equal(car.amount, 45.21);
+  assert.equal(car.applies_to, 'car', 'car costs are shared by business-use %');
+});
+
+test('expenses: claimable = car costs × business-use %, split ABN/TFN by km, plus tagged items', () => {
+  const list = [
+    { amount: 100, category: 'fuel', applies_to: 'car' },
+    { amount: 300, category: 'service', applies_to: 'car' },
+    { amount: 12, category: 'tolls_parking', applies_to: 'abn' },
+    { amount: 8, category: 'tolls_parking', applies_to: 'personal' },
+    { amount: 50, category: 'clothing', applies_to: 'tfn' },
+  ];
+  const s = summariseExpenses(list, { businessUse: 60, abnShare: 75 });
+  assert.equal(s.total, 470);
+  assert.equal(s.carTotal, 400);
+  assert.equal(s.carClaimable, 240);
+  assert.equal(s.parts.carAbn, 180);
+  assert.equal(s.parts.carTfn, 60);
+  assert.deepEqual(s.claimable, { abn: 192, tfn: 110 });
+});
+
+test('expenses in reports use the ATO logbook business-use %', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ start_odo: 1000, end_odo: 1060 })); // business ABN 60
+  await store.createTrip(trip({ category: 'personal', trip_type: 'home', purpose: '', start_odo: 1060, end_odo: 1100, start_at: '2026-10-08T00:00:00Z', end_at: null }));
+  await store.generateLogbook('2026-10-05', new Date('2026-12-30T00:00:00Z')); // 60% business
+  await store.createExpense({ amount: 200, category: 'fuel', date: '2026-10-10' });
+  const r = await store.generateReport('monthly', '2026-10-01', '2026-10-31');
+  assert.equal(r.expenses.summary.businessUse, 60);
+  assert.match(r.expenses.summary.businessUseSource, /ATO logbook from 2026-10-05/);
+  assert.equal(r.expenses.summary.claimable.abn, 120);
+  assert.match(receiptName({ ...store.expenses[0], photo_id: 1 }), /^2026-10-10_Petrol_200\.00_\d+\.jpg$/);
+});
+
+test('clients: rename merges names across trips', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ purpose: 'ACME' }));
+  await store.createTrip(trip({ purpose: '', between_clients: true, from_client: 'acme', to_client: 'Blue', start_odo: 1025.5, end_odo: 1030, start_at: '2026-10-07T00:00:00Z', end_at: null }));
+  await store.renameClient('Acme', 'Acme Pty Ltd');
+  assert.deepEqual(store.trips.map((t) => t.purpose || t.from_client), ['Acme Pty Ltd', 'Acme Pty Ltd']);
+});

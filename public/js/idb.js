@@ -9,17 +9,24 @@ function req(r) {
 }
 
 export async function idbAdapter() {
-  const open = indexedDB.open(DB_NAME, 1);
-  open.onupgradeneeded = () => {
+  const open = indexedDB.open(DB_NAME, 2);
+  open.onupgradeneeded = (e) => {
     const db = open.result;
-    db.createObjectStore('trips', { keyPath: 'id', autoIncrement: true });
-    db.createObjectStore('reports', { keyPath: 'id', autoIncrement: true });
-    db.createObjectStore('meta', { keyPath: 'key' });
+    if (e.oldVersion < 1) {
+      db.createObjectStore('trips', { keyPath: 'id', autoIncrement: true });
+      db.createObjectStore('reports', { keyPath: 'id', autoIncrement: true });
+      db.createObjectStore('meta', { keyPath: 'key' });
+    }
+    if (e.oldVersion < 2) {
+      db.createObjectStore('expenses', { keyPath: 'id', autoIncrement: true });
+      db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true }); // receipt images
+    }
   };
   const db = await req(open);
   const store = (name, mode = 'readonly') => db.transaction(name, mode).objectStore(name);
   return {
     getAll: (name) => req(store(name).getAll()),
+    get: (name, key) => req(store(name).get(key)),
     put: (name, value) => {
       const v = { ...value };
       if (v.id === undefined || v.id === null) delete v.id;
