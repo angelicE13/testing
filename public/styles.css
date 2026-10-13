@@ -160,3 +160,8 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
   opacity: 0; pointer-events: none; transition: opacity .2s; max-width: calc(100vw - 32px); z-index: 10;
 }
 #toast.show { opacity: 1; }
+
+.file-btn { margin: 0; color: var(--text); font-size: 1rem; }
+.file-btn input { display: none; }
+#backup-nag .warn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin: 0 0 12px; }
+#backup-nag .link { color: inherit; font-weight: 700; text-decoration: underline; padding: 0; }

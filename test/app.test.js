@@ -1,20 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { openDb, ValidationError } from '../src/db.js';
-import { lastCompletedPeriod, financialQuarter } from '../src/periods.js';
-import { runDueReports, summarise, toCsv, buildRows } from '../src/reports.js';
-import { createApp } from '../src/app.js';
-import { loadConfig } from '../src/config.js';
+import { lastCompletedPeriod, financialQuarter } from '../public/js/periods.js';
+import { ValidationError, duePeriods, summarise, toCsv, makeReport } from '../public/js/logic.js';
+import { Store, memoryAdapter } from '../public/js/store.js';
 
-function setup(env = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mileage-'));
-  const config = loadConfig({ DATA_DIR: dataDir, APP_TIMEZONE: 'Australia/Sydney', ...env });
-  fs.mkdirSync(config.reportsDir, { recursive: true });
-  return { config, store: openDb(config.dbFile) };
-}
+const TZ = 'Australia/Melbourne';
+const newStore = () => new Store(memoryAdapter(), { timeZone: TZ }).load();
 
 const trip = (o = {}) => ({
   category: 'business', trip_type: 'abn', purpose: 'Acme Pty Ltd',
@@ -30,76 +21,83 @@ test('periods: last completed week / month / quarter', () => {
   assert.equal(financialQuarter('2027-04-01'), 'FY2026-27 Q4');
 });
 
-test('trips: distance computed, auto start odo and validation', () => {
-  const { store } = setup();
-  const { trip: t } = store.createTrip(trip());
+test('trips: distance computed, auto start odo and validation', async () => {
+  const store = await newStore();
+  const { trip: t } = await store.createTrip(trip());
   assert.equal(t.distance, 25.5);
   assert.equal(store.lastEndOdo(), 1025.5);
 
-  const { warnings } = store.createTrip(trip({ start_odo: 1030, end_odo: 1040, start_at: '2026-10-07T00:00:00Z', end_at: null }));
-  assert.match(warnings[0], /4\.5 unlogged/);
+  const { warnings } = await store.createTrip(trip({ start_odo: 1030, end_odo: null, start_at: '2026-10-07T00:00:00Z' }));
+  assert.match(warnings[0], /4\.5 km not logged/);
 
-  assert.throws(() => store.createTrip(trip({ end_odo: 900 })), ValidationError);
-  assert.throws(() => store.createTrip(trip({ purpose: '' })), /purpose or client/);
-  assert.throws(() => store.createTrip(trip({ between_clients: true, from_client: 'A' })), /from.*to/);
-  assert.throws(() => store.createTrip(trip({ category: 'personal', trip_type: 'abn' })), /trip_type/);
+  await assert.rejects(store.createTrip(trip({ end_odo: 900 })), ValidationError);
+  await assert.rejects(store.createTrip(trip({ purpose: '' })), /purpose or client/);
+  await assert.rejects(store.createTrip(trip({ between_clients: true, from_client: 'A' })), /from.*to/);
+  await assert.rejects(store.createTrip(trip({ category: 'personal', trip_type: 'abn' })), /type of trip/);
 });
 
-test('trips: start then end, only one active trip at a time', () => {
-  const { store } = setup();
-  const { trip: t } = store.createTrip(trip({ end_odo: null, end_at: null }));
+test('trips: start then end, only one active trip at a time', async () => {
+  const store = await newStore();
+  const { trip: t } = await store.createTrip(trip({ end_odo: null, end_at: null }));
   assert.equal(store.activeTrip().id, t.id);
-  assert.throws(() => store.createTrip(trip({ end_odo: null, end_at: null })), /already in progress/);
-  const { trip: ended } = store.endTrip(t.id, { distance: 12.3 });
+  await assert.rejects(store.createTrip(trip({ end_odo: null })), /already in progress/);
+  const { trip: ended } = await store.endTrip(t.id, { distance: 12.3 });
   assert.equal(ended.end_odo, 1012.3);
   assert.equal(ended.distance, 12.3);
   assert.equal(store.activeTrip(), null);
 });
 
-test('reports: due reports are generated once with correct totals', async () => {
-  const { store, config } = setup();
-  store.createTrip(trip()); // Wed 7 Oct local, business 25.5
-  store.createTrip(trip({
+test('reports: catch up every missed period once, skipping empty ones', async () => {
+  const store = await newStore();
+  await store.createTrip(trip()); // Wed 7 Oct (Melbourne), business 25.5
+  await store.createTrip(trip({
     category: 'personal', trip_type: 'work', purpose: '', start_odo: 1025.5, end_odo: 1035.5,
     start_at: '2026-10-07T22:00:00Z', end_at: '2026-10-07T22:30:00Z',
   }));
-  const now = new Date('2026-10-11T13:00:00Z'); // Mon 12 Oct 00:00 Sydney
-  const created = await runDueReports(store, config, now);
-  assert.deepEqual(created.map((r) => r.period_type), ['weekly', 'monthly', 'quarterly']);
-  const weekly = created[0];
-  assert.equal(weekly.period_start, '2026-10-05');
-  assert.equal(weekly.trip_count, 2);
-  assert.equal(weekly.total_distance, 35.5);
-  assert.ok(fs.existsSync(weekly.csv_path) && fs.existsSync(weekly.xlsx_path));
-  assert.equal((await runDueReports(store, config, now)).length, 0, 'idempotent');
+  await store.createTrip(trip({ start_odo: 1035.5, end_odo: 1040, start_at: '2026-10-20T00:00:00Z', end_at: null }));
 
-  const s = summarise(store.allCompletedTrips());
-  assert.equal(s.businessPercent, 71.8);
-  assert.equal(s.abn, 25.5);
+  // Phone not opened until Tue 3 Nov: weeks of 5 Oct and 19 Oct are due (12 Oct week was empty), plus October.
+  const created = await store.generateDue(new Date('2026-11-02T22:00:00Z'));
+  assert.deepEqual(created.map((r) => `${r.period_type} ${r.period_start}`), [
+    'weekly 2026-10-05', 'weekly 2026-10-19', 'monthly 2026-10-01',
+  ]);
+  const week = created[0];
+  assert.equal(week.summary.trips, 2);
+  assert.equal(week.summary.total, 35.5);
+  assert.equal(week.summary.businessPercent, 71.8);
+  assert.equal((await store.generateDue(new Date('2026-11-02T22:00:00Z'))).length, 0, 'idempotent');
+
+  // Quarter Oct–Dec becomes due on 1 Jan, Melbourne time (31 Dec 13:00 UTC).
+  const jan = await store.generateDue(new Date('2026-12-31T13:00:00Z'));
+  assert.ok(jan.some((r) => r.period_type === 'quarterly' && r.period_start === '2026-10-01'));
 });
 
-test('csv: escapes quotes/commas and neutralises formulas', () => {
-  const { store, config } = setup();
-  store.createTrip(trip({ purpose: '=HYPERLINK("x"), "Co"' }));
-  const rows = buildRows(store.allCompletedTrips(), config.timezone);
-  const csv = toCsv({ title: 't', rows, summary: summarise([]), unit: 'km' });
+test('reports: nothing due before a period ends', () => {
+  const trips = [{ ...trip(), id: 1, distance: 25.5 }];
+  assert.deepEqual(duePeriods(trips, [], '2026-10-11', TZ), []);
+});
+
+test('csv: escapes quotes/commas and neutralises formulas', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ purpose: '=HYPERLINK("x"), "Co"' }));
+  const report = makeReport(store.trips, 'custom', '2026-10-01', '2026-10-31', TZ);
+  const csv = toCsv(report);
   assert.ok(csv.includes(`"'=HYPERLINK(""x""), ""Co"""`));
+  assert.equal(summarise([]).businessPercent, 0);
 });
 
-test('http: password protects the API', async () => {
-  const { store, config } = setup({ APP_PASSWORD: 'secret' });
-  const server = createApp(store, config).listen(0);
-  const base = `http://127.0.0.1:${server.address().port}`;
-  try {
-    assert.equal((await fetch(`${base}/api/trips`)).status, 401);
-    assert.equal((await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"password":"no"}' })).status, 401);
-    const login = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"password":"secret"}' });
-    const cookie = login.headers.get('set-cookie').split(';')[0];
-    const res = await fetch(`${base}/api/trips`, { headers: { cookie } });
-    assert.equal(res.status, 200);
-    const bad = await fetch(`${base}/api/trips`, { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' });
-    assert.equal(bad.status, 400);
-  } finally {
-    server.close();
-  }
+test('backup: export and restore round-trip, bad files rejected', async () => {
+  const a = await newStore();
+  await a.createTrip(trip());
+  await a.generateReport('custom', '2026-10-01', '2026-10-31');
+  const backup = JSON.parse(JSON.stringify(a.exportData()));
+
+  const b = await newStore();
+  await b.createTrip(trip({ purpose: 'will be replaced' }));
+  await b.importData(backup);
+  assert.equal(b.trips.length, 1);
+  assert.equal(b.trips[0].purpose, 'Acme Pty Ltd');
+  assert.equal(b.reports.length, 1);
+  await assert.rejects(b.importData({ hello: 1 }), /not a Mileage Logbook backup/);
+  assert.equal(b.trips.length, 1, 'nothing wiped on a bad file');
 });

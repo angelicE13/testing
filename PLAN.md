@@ -6,27 +6,21 @@ A phone-first app to log every trip (personal or business) with start/end
 odometer, purpose and time, stored in a database, with logbook files
 generated automatically every week, month and quarter.
 
-## Platform choice: installable web app (PWA) + small Node.js server
+## Platform choice: phone-only installable web app (PWA)
 
-| Option | Phone UX | Runs scheduled jobs at 12 AM | Effort / cost |
-|---|---|---|---|
-| Native iOS/Android app | Excellent | Unreliable (OS kills background jobs) | High, app-store accounts |
-| Spreadsheet / Google Form | Poor, no auto start-odo | Via scripts only | Low, but clunky |
-| **PWA + Node server (chosen)** | Installs to home screen, full-screen, big buttons | **Yes** (the server runs the cron) | Low, one small server |
+Chosen by the user: **no server**. The app is a static web page hosted free on
+GitHub Pages and added to the phone's home screen.
 
-Why this wins: a phone cannot reliably wake up at midnight to build a file,
-but a server can. The PWA gives an app-like experience on iPhone and Android
-("Add to Home Screen") without an app store, and the same data is reachable
-from a laptop for downloading reports.
-
-Stack (kept deliberately small):
-
-- **Server:** Node.js 22+, Express, built-in SQLite (`node:sqlite`, no native
-  build step), `node-cron` for schedules, `exceljs` for Excel files.
-- **Client:** plain HTML/CSS/JS (no build step), mobile-first, dark/light theme,
-  service worker for fast loading and home-screen install.
-- **Hosting:** any always-on box — a cheap VPS, Fly.io/Render/Railway with a
-  persistent volume, a Raspberry Pi at home, or a Docker host.
+- **Data:** stored on the phone (IndexedDB). The app asks the browser to keep
+  it permanently. Backup/restore uses a JSON file.
+- **Offline:** a service worker stores every app file, so it opens and saves
+  trips with no signal.
+- **Reports:** a phone can't run a job at exactly 12 AM when the app is
+  closed. Reports are created at midnight if the app is open, otherwise the
+  first time it's opened after the period ends. Every missed period is caught
+  up. Files are made on the phone (Excel via ExcelJS, CSV) and shared through
+  the share sheet.
+- **Time zone:** the phone's own (Australia/Melbourne).
 
 ## Features
 
@@ -51,50 +45,44 @@ Stack (kept deliberately small):
 - Totals for the current week / month / quarter on the home screen.
 
 ### Reports (automatic files)
-| Report | Runs | Covers |
+| Report | Due from | Covers |
 |---|---|---|
-| Weekly | Every Monday 12:00 AM | Previous Monday–Sunday |
-| Monthly | 1st of every month 12:00 AM | Previous calendar month |
+| Weekly | Monday 12:00 AM | Previous Monday–Sunday |
+| Monthly | 1st of the month 12:00 AM | Previous calendar month |
 | Quarterly | 1 Jan / 1 Apr / 1 Jul / 1 Oct 12:00 AM | Previous quarter (also labelled with the Australian financial-year quarter) |
 
-- Each report is saved as **CSV** and **Excel (.xlsx)** in `data/reports/`
-  and listed in the Reports tab for download.
+- Created at that time if the app is open, otherwise the next time it's opened.
+- Listed in the Reports tab. Each one can be saved or shared as **Excel (.xlsx)** or **CSV**.
 - Columns: date, start time, end time, category, type (personal type or
   TFN/ABN), purpose/client, between-clients route, start odo, end odo,
   distance.
 - Summary: total, business, personal, business-use %, TFN vs ABN totals.
-- **Catch-up:** if the server was off at midnight, missing reports are
-  generated the next time it starts. Generation is idempotent.
+- **Catch-up:** every period that ended while the app was closed gets its
+  report. Periods with no trips are skipped. Each report is made only once.
 - Any custom date range can also be exported on demand.
 
-### Settings / security
-- Time zone (schedules run at midnight in *your* zone), distance unit (km/mi).
-- Optional password (`APP_PASSWORD`) so the server can live on the internet.
+### Backup
+- Save a backup file (to Files / iCloud Drive / Google Drive / email) and
+  restore it on a new phone. A reminder appears after 2 weeks without one.
 
-## Data model
+## Data model (IndexedDB on the phone)
 
 ```
-trips
-  id, start_at, end_at, start_odo, end_odo, distance (computed),
-  category (personal|business),
-  trip_type (personal_travel|home|work|tfn|abn),
-  purpose, between_clients (0/1), from_client, to_client, notes,
-  start_odo_manual (0/1), created_at, updated_at
-
-reports
-  id, period_type (weekly|monthly|quarterly|custom),
-  period_start, period_end, csv_path, xlsx_path,
-  trip_count, total_distance, generated_at
-  UNIQUE(period_type, period_start)
+trips    id, start_at, end_at, start_odo, end_odo, distance, category,
+         trip_type, purpose, between_clients, from_client, to_client, notes,
+         start_odo_manual, created_at, updated_at
+reports  id, period_type, period_start, period_end, label, title,
+         rows (snapshot), summary, generated_at
+meta     lastBackupAt
 ```
 
 ## Build phases
 
-1. **MVP (this commit):** trip entry with auto start-odo and auto-compute,
-   history with edit/delete, scheduled + catch-up reports (CSV/XLSX),
-   on-demand export, PWA install, optional password, tests.
-2. **Next:** offline queue (log trips with no signal, sync later), email the
-   reports automatically, multiple vehicles (each with its own odometer
-   chain), GPS-assisted distance check, photo of the odometer.
+1. **Initial version (now):** phone-only. Trip entry with auto start-odo and
+   auto-compute, history with edit/delete, catch-up reports (CSV/XLSX),
+   date-range export, backup/restore, works offline, tests.
+2. **Next, based on real use:** multiple vehicles (each with its own odometer
+   chain), automatic cloud backup, GPS-assisted distance check, photo of the
+   odometer.
 3. **Later:** client address book with autocomplete, recurring routes,
    charts, cloud backup of the database.

@@ -16,22 +16,12 @@
 <body>
   <header class="topbar">
     <h1 id="title">Log trip</h1>
-    <button id="logout" class="link hidden" type="button">Log out</button>
   </header>
 
   <main>
-    <!-- Login -->
-    <section id="view-login" class="view hidden">
-      <form id="login-form" class="card">
-        <h2>Sign in</h2>
-        <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-        <p class="error" id="login-error"></p>
-        <button class="btn primary big" type="submit">Sign in</button>
-      </form>
-    </section>
-
     <!-- Log -->
     <section id="view-log" class="view">
+      <div id="backup-nag"></div>
       <div class="stats" id="stats"></div>
       <div id="active-trip"></div>
       <div id="new-trip"></div>
@@ -46,9 +36,10 @@
     <section id="view-reports" class="view hidden">
       <div class="card">
         <h2>Automatic reports</h2>
-        <p class="muted">Files are created at 12:00 AM (<span id="tz"></span>):
-          weekly every Monday, monthly on the 1st, quarterly on 1 Jan / Apr / Jul / Oct.</p>
-        <button id="run-due" class="btn" type="button">Check for due reports now</button>
+        <p class="muted">A new report appears here after each week (Mon–Sun), month and quarter
+          (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec) ends — at midnight if the app is open, otherwise
+          the next time you open it. Time zone: <span id="tz"></span>.</p>
+        <p class="muted">Tap <strong>Excel</strong> or <strong>CSV</strong> to save the file to Files, email it or send it to Drive.</p>
       </div>
       <form id="custom-report" class="card">
         <h2>Export a date range</h2>
@@ -59,6 +50,16 @@
         <button class="btn primary" type="submit">Create report</button>
       </form>
       <div id="reports"></div>
+      <div class="card">
+        <h2>Backup</h2>
+        <p class="muted">Your trips are stored only on this phone. Save a backup now and then (to Files, iCloud
+          Drive, Google Drive or email) so you don't lose them if the phone is lost or replaced.</p>
+        <p class="muted" id="backup-info"></p>
+        <div class="row">
+          <button class="btn primary" type="button" data-backup>Save backup</button>
+          <label class="btn file-btn">Restore backup<input type="file" id="restore" accept="application/json,.json"></label>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -78,6 +79,7 @@
 
   <div id="toast" role="status" aria-live="polite"></div>
   <datalist id="clients"></datalist>
+  <script src="vendor/exceljs.min.js" defer></script>
   <script src="app.js" type="module"></script>
 </body>
 </html>

@@ -1,4 +1,10 @@
-// Mileage Logbook — phone-first client. No build step; plain ES modules.
+// Mileage Logbook — runs entirely on the phone. Trips are stored in this device's
+// IndexedDB; reports are created whenever the app is opened after a period ends.
+import { Store, memoryAdapter } from './js/store.js';
+import { idbAdapter } from './js/idb.js';
+import { periodContaining, localDate } from './js/periods.js';
+import { summarise, tripsInRange, byStartDesc, UNIT } from './js/logic.js';
+import { deliver, reportFile } from './js/files.js';
 
 const TYPES = {
   personal: [
@@ -16,7 +22,9 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-const state = { config: { unit: 'km' }, lastEndOdo: null, active: null, trips: [], view: 'log' };
+const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
+let store;
+const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -24,7 +32,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const num = (n) => (n === null || n === undefined || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 }));
 const round1 = (n) => Math.round(n * 10) / 10;
-const unit = () => state.config.unit;
+const unit = () => UNIT;
 const pad = (n) => String(n).padStart(2, '0');
 
 function toLocalInput(value) {
@@ -57,35 +65,22 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
-async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
-  });
-  if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/api/login') {
-    showLogin();
-    throw new Error('Please sign in');
+// ---------- data ----------
+function summary() {
+  const today = localDate(new Date(), TIME_ZONE);
+  const out = {};
+  for (const type of ['weekly', 'monthly', 'quarterly']) {
+    const { start, end } = periodContaining(type, today);
+    out[type] = summarise(tripsInRange(store.trips, start, end, TIME_ZONE));
   }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
+  return out;
 }
 
-// ---------- data ----------
 async function refresh() {
-  const [active, last, trips, summary] = await Promise.all([
-    api('/api/trips/active'),
-    api('/api/odometer/last'),
-    api('/api/trips?limit=300'),
-    api('/api/summary'),
-  ]);
-  state.active = active;
-  state.lastEndOdo = last.lastEndOdo;
-  state.trips = trips;
-  state.summary = summary;
+  state.active = store.activeTrip();
+  state.lastEndOdo = store.lastEndOdo();
+  state.trips = [...store.trips].sort(byStartDesc);
+  state.summary = summary();
   renderClients();
   renderLog();
   if (state.view === 'history') renderHistory();
@@ -269,9 +264,7 @@ function tripForm(host, { mode, trip = null, onSaved, onModeChange }) {
     const btn = $('button[type=submit]', form);
     btn.disabled = true;
     try {
-      const result = mode === 'edit'
-        ? await api(`/api/trips/${trip.id}`, { method: 'PUT', body })
-        : await api('/api/trips', { method: 'POST', body });
+      const result = mode === 'edit' ? await store.updateTrip(trip.id, body) : await store.createTrip(body);
       setPref('lastCategory', f.category);
       toast(result.warnings?.length ? result.warnings[0] : { start: 'Trip started', complete: 'Trip saved', edit: 'Changes saved' }[mode]);
       await onSaved?.(result.trip);
@@ -285,7 +278,7 @@ function tripForm(host, { mode, trip = null, onSaved, onModeChange }) {
   $('.delete', form)?.addEventListener('click', async () => {
     if (!confirm('Delete this trip? This cannot be undone.')) return;
     try {
-      await api(`/api/trips/${trip.id}`, { method: 'DELETE' });
+      await store.deleteTrip(trip.id);
       toast('Trip deleted');
       await onSaved?.(null);
     } catch (err) {
@@ -319,11 +312,9 @@ function renderActive() {
       <p class="muted">Started ${esc(dayLabel(t.start_at))}, ${esc(time(t.start_at))} · odometer ${num(t.start_odo)}</p>
       <div class="row">
         <label>End odometer<input type="number" name="end_odo" inputmode="decimal" step="0.1" min="0"></label>
-        ${autoCompute
-          ? `<label>or distance (${unit()})<input type="number" name="distance" inputmode="decimal" step="0.1" min="0"></label>`
-          : `<label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>`}
+        ${autoCompute ? `<label>or distance (${unit()})<input type="number" name="distance" inputmode="decimal" step="0.1" min="0"></label>` : ''}
       </div>
-      ${autoCompute ? `<label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>` : ''}
+      <label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>
       <div class="total"><span>Total</span><strong class="total-value">–</strong></div>
       <p class="error"></p>
       <button class="btn primary big" type="submit">End trip</button>
@@ -338,7 +329,9 @@ function renderActive() {
   const show = () => {
     const end = parseFloat(endInput.value);
     const total = Number.isFinite(end) ? round1(end - t.start_odo) : null;
-    $('.total-value', form).textContent = total === null ? '–' : `${num(total)} ${unit()}`;
+    const el = $('.total-value', form);
+    el.textContent = total === null ? '–' : `${num(total)} ${unit()}`;
+    el.style.color = total !== null && total < 0 ? 'var(--danger)' : '';
   };
   endInput.addEventListener('input', () => {
     if (distInput) distInput.value = endInput.value === '' ? '' : round1(parseFloat(endInput.value) - t.start_odo);
@@ -351,11 +344,7 @@ function renderActive() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      if (endInput.value === '') throw new Error('Enter the end odometer or distance');
-      await api(`/api/trips/${t.id}/end`, {
-        method: 'POST',
-        body: { end_odo: endInput.value, end_at: fromLocalInput(form.elements.end_at.value) },
-      });
+      await store.endTrip(t.id, { end_odo: endInput.value, end_at: fromLocalInput(form.elements.end_at.value) });
       toast('Trip ended');
       await refresh();
     } catch (err) {
@@ -365,7 +354,7 @@ function renderActive() {
   $('.edit', form).addEventListener('click', () => openEdit(t));
   $('.cancel', form).addEventListener('click', async () => {
     if (!confirm('Discard this trip?')) return;
-    await api(`/api/trips/${t.id}`, { method: 'DELETE' });
+    await store.deleteTrip(t.id);
     toast('Trip discarded');
     await refresh();
   });
@@ -374,11 +363,11 @@ function renderActive() {
 function renderLog() {
   renderStats();
   renderActive();
+  renderBackupNag();
   const host = $('#new-trip');
   if (state.active) { host.innerHTML = ''; return; }
-  const mode = prefs('newTripMode', 'start');
   tripForm(host, {
-    mode,
+    mode: prefs('newTripMode', 'start'),
     onSaved: refresh,
     onModeChange: (m) => { setPref('newTripMode', m); renderLog(); },
   });
@@ -432,11 +421,11 @@ function openEdit(trip) {
 $('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog').close());
 
 // ---------- Reports view ----------
-async function renderReports() {
-  const reports = await api('/api/reports');
+function renderReports() {
+  const reports = store.listReports();
   const host = $('#reports');
   if (!reports.length) {
-    host.innerHTML = '<p class="empty">No reports yet. They appear here automatically once a week, month or quarter ends.</p>';
+    host.innerHTML = '<p class="empty">No reports yet. They appear here once a week, month or quarter with trips has ended.</p>';
     return;
   }
   host.innerHTML = reports.map((r) => `
@@ -444,64 +433,142 @@ async function renderReports() {
       <div>
         <span class="badge">${esc(r.period_type)}</span>
         <div><strong>${esc(r.label)}</strong></div>
-        <div class="muted">${r.trip_count} trips · ${num(r.total_distance)} ${unit()} · made ${esc(new Date(r.generated_at).toLocaleString())}</div>
+        <div class="muted">${r.summary.trips} trip${r.summary.trips === 1 ? '' : 's'} · ${num(r.summary.total)} ${unit()} · ${r.summary.businessPercent}% business</div>
+        <div class="muted">Made ${esc(new Date(r.generated_at).toLocaleString())}</div>
       </div>
       <div class="actions">
-        <a class="btn small" href="/api/reports/${r.id}/download?format=xlsx" download>Excel</a>
-        <a class="btn small" href="/api/reports/${r.id}/download?format=csv" download>CSV</a>
-        <button class="btn small regen" type="button" data-id="${r.id}" title="Rebuild with latest edits" aria-label="Rebuild report">↻</button>
+        <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
+        <button class="btn small" type="button" data-file="csv" data-id="${r.id}">CSV</button>
+        <button class="btn small" type="button" data-regen="${r.id}" title="Rebuild with latest edits" aria-label="Rebuild report">↻</button>
       </div>
     </div>`).join('');
 }
 
 $('#reports').addEventListener('click', async (e) => {
-  const b = e.target.closest('.regen');
+  const b = e.target.closest('button');
   if (!b) return;
   b.disabled = true;
   try {
-    await api(`/api/reports/${b.dataset.id}/regenerate`, { method: 'POST' });
-    toast('Report rebuilt');
-    await renderReports();
+    if (b.dataset.file) {
+      const report = store.reports.find((r) => r.id === Number(b.dataset.id));
+      await deliver(await reportFile(report, b.dataset.file));
+    } else if (b.dataset.regen) {
+      await store.regenerate(Number(b.dataset.regen));
+      toast('Report rebuilt with your latest trips');
+      renderReports();
+    }
   } catch (err) {
     toast(err.message);
+  } finally {
     b.disabled = false;
-  }
-});
-
-$('#run-due').addEventListener('click', async () => {
-  try {
-    const created = await api('/api/reports/run', { method: 'POST' });
-    toast(created.length ? `Created ${created.length} report(s)` : 'All reports are up to date');
-    await renderReports();
-  } catch (err) {
-    toast(err.message);
   }
 });
 
 $('#custom-report').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
+  const from = fd.get('from');
+  const to = fd.get('to');
+  if (!from || !to || from > to) return toast('Choose a valid date range');
   try {
-    await api('/api/reports/custom', { method: 'POST', body: { from: fd.get('from'), to: fd.get('to') } });
-    toast('Report created');
-    await renderReports();
+    const report = await store.generateReport('custom', from, to);
+    renderReports();
+    await deliver(await reportFile(report, 'xlsx'));
   } catch (err) {
     toast(err.message);
   }
+  return undefined;
 });
 
-// ---------- navigation & auth ----------
-const TITLES = { log: 'Log trip', history: 'History', reports: 'Reports', login: 'Mileage Logbook' };
+// ---------- backup ----------
+const BACKUP_NAG_DAYS = 14;
+
+function daysSinceBackup() {
+  const last = store.meta.lastBackupAt;
+  return last ? Math.floor((Date.now() - new Date(last)) / 86400000) : null;
+}
+
+function renderBackupNag() {
+  const host = $('#backup-nag');
+  const days = daysSinceBackup();
+  const due = store.trips.length >= 3 && (days === null || days >= BACKUP_NAG_DAYS);
+  host.innerHTML = due
+    ? `<div class="warn">Your trips are saved only on this phone. ${days === null ? 'You haven\'t made a backup yet.' : `Last backup was ${days} days ago.`}
+       <button class="link" type="button" data-backup>Back up now</button></div>`
+    : '';
+}
+
+function renderBackupInfo() {
+  const days = daysSinceBackup();
+  $('#backup-info').textContent = `${store.trips.length} trips on this phone. ${
+    days === null ? 'No backup made yet.' : `Last backup ${days === 0 ? 'today' : `${days} day(s) ago`}.`}`;
+}
+
+async function backup() {
+  const data = JSON.stringify(store.exportData(), null, 1);
+  const file = new File([data], `mileage-backup-${localDate(new Date(), TIME_ZONE)}.json`, { type: 'application/json' });
+  const result = await deliver(file);
+  if (result !== 'cancelled') {
+    await store.setMeta('lastBackupAt', new Date().toISOString());
+    toast('Backup saved');
+  }
+  renderBackupInfo();
+  renderBackupNag();
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-backup]')) backup().catch((err) => toast(err.message));
+});
+
+$('#restore').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!confirm('Replace ALL trips on this phone with the backup? This cannot be undone.')) return;
+  try {
+    await store.importData(JSON.parse(await file.text()));
+    toast(`Restored ${store.trips.length} trips`);
+    renderBackupInfo();
+    await refresh();
+  } catch (err) {
+    toast(err instanceof SyntaxError ? 'That file is not a valid backup' : err.message);
+  }
+});
+
+// ---------- automatic reports ----------
+async function checkDueReports() {
+  const created = await store.generateDue();
+  if (created.length) {
+    toast(`${created.length} new report${created.length > 1 ? 's' : ''} ready in Reports`);
+    if (state.view === 'reports') renderReports();
+  }
+}
+
+// If the app is left open past midnight, check again then.
+function scheduleMidnightCheck() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+  setTimeout(() => { checkDueReports().finally(scheduleMidnightCheck); refresh(); }, next - now);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && store) {
+    checkDueReports().catch(() => {});
+    refresh();
+  }
+});
+
+// ---------- navigation ----------
+const TITLES = { log: 'Log trip', history: 'History', reports: 'Reports' };
 
 function show(view) {
   state.view = view;
   $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${view}`));
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  $('#tabs').classList.toggle('hidden', view === 'login');
   $('#title').textContent = TITLES[view];
   if (view === 'history') renderHistory();
-  if (view === 'reports') renderReports().catch((err) => toast(err.message));
-  if (view === 'log') refresh().catch((err) => toast(err.message));
+  if (view === 'reports') { renderReports(); renderBackupInfo(); }
+  if (view === 'log') refresh();
   window.scrollTo(0, 0);
 }
 
@@ -510,39 +577,26 @@ $('#tabs').addEventListener('click', (e) => {
   if (b) show(b.dataset.view);
 });
 
-function showLogin() {
-  show('login');
-  $('#logout').classList.add('hidden');
-}
-
-$('#login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  try {
-    await api('/api/login', { method: 'POST', body: { password: e.target.password.value } });
-    e.target.reset();
-    $('#login-error').textContent = '';
-    $('#logout').classList.toggle('hidden', !state.config.authRequired);
-    show('log');
-  } catch (err) {
-    $('#login-error').textContent = err.message;
-  }
-});
-
-$('#logout').addEventListener('click', async () => {
-  await api('/api/logout', { method: 'POST' });
-  showLogin();
-});
-
 async function init() {
-  state.config = await api('/api/config');
-  $('#tz').textContent = state.config.timezone;
+  let adapter;
+  try {
+    adapter = await idbAdapter();
+  } catch {
+    adapter = memoryAdapter();
+    toast('This browser cannot store data — trips will be lost when you close it.');
+  }
+  store = await new Store(adapter, { timeZone: TIME_ZONE }).load();
+  // Ask the browser not to clear our data when the phone is low on space.
+  navigator.storage?.persist?.().catch(() => {});
+
+  $('#tz').textContent = TIME_ZONE.replace(/_/g, ' ');
   const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  $('#custom-report [name=from]').value = toLocalInput(first).slice(0, 10);
+  $('#custom-report [name=from]').value = toLocalInput(new Date(now.getFullYear(), now.getMonth(), 1)).slice(0, 10);
   $('#custom-report [name=to]').value = toLocalInput(now).slice(0, 10);
-  if (state.config.authRequired && !state.config.authenticated) return showLogin();
-  $('#logout').classList.toggle('hidden', !state.config.authRequired);
-  return show('log');
+
+  show('log');
+  await checkDueReports();
+  scheduleMidnightCheck();
 }
 
 init().catch((err) => toast(err.message));

@@ -1,71 +1,62 @@
 # Mileage Logbook
 
-A phone-first app for logging business and personal trips. It saves every trip
-to a database and creates logbook files on its own each week, month and quarter.
-See [PLAN.md](PLAN.md) for the design and roadmap.
+A mileage logbook for your phone. Log business and personal trips and get weekly,
+monthly and quarterly reports in Excel and CSV.
+
+**Everything is stored on your phone.** There is no server and no account.
+The app is just a web page (hosted free on GitHub Pages) that you add to your
+home screen. After the first visit it works with no signal.
+
+## Open it
+
+**https://angelice13.github.io/testing/**
+
+- **iPhone (Safari):** tap Share → *Add to Home Screen*. Always open it from
+  that icon. iPhone keeps home-screen apps' data separately from Safari.
+- **Android (Chrome):** menu ⋮ → *Install app* / *Add to Home screen*.
 
 ## Features
 
-- **Start trip / End trip** buttons, or log a trip after it's finished.
-- **Start odometer fills itself in** from the last trip's end reading. Switch
-  it off to type the reading yourself. You get a warning if there's a gap or
-  an overlap.
-- **Auto-compute:** type the end odometer or the distance, and the other one
-  is worked out for you.
-- **Personal** trips: personal travel, travel to home, travel to work.
-  **Business** trips: TFN or ABN, client or purpose, and an option for travel
-  between clients (from client → to client).
-- **Automatic reports** (CSV + Excel) at 12:00 AM in your time zone:
-  - weekly every Monday (covers the previous Mon–Sun)
-  - monthly on the 1st (covers the previous month)
-  - quarterly on 1 Jan / Apr / Jul / Oct (covers the previous quarter, also
-    labelled with the Australian financial-year quarter)
+- **Start trip / End trip**, or log a finished trip all at once.
+- **Start odometer** is filled in from the last trip's end reading. Switch it
+  off to type the reading yourself. You get a warning about gaps or overlaps.
+- **Auto-compute:** enter the end odometer or the distance, and the other is
+  worked out.
+- **Personal:** personal travel, travel to home, travel to work.
+  **Business:** TFN or ABN, client/purpose, and travel between clients
+  (from → to). Client names you've used before are suggested.
+- **History:** tap a trip to edit or delete it.
+- **Reports:**
+  - weekly (Mon–Sun)
+  - monthly
+  - quarterly (calendar quarters, also labelled with the Australian
+    financial-year quarter)
 
-  If the server was off at midnight, it creates any missed reports when it
-  starts again. You can also export any date range yourself.
-- Reports include date, start/end time, category, type, purpose/client,
-  start/end odometer and distance, plus totals for business, personal, TFN
-  and ABN, and your business-use %.
-- Add it to your phone's home screen (PWA). Works in light and dark mode.
+  A report is created when its period ends: at 12 AM if the app is open,
+  otherwise the next time you open it. Missed periods are caught up. Tap
+  Excel/CSV to save to Files, email it or send it to Drive. ↻ rebuilds a
+  report after you edit trips.
+- **Backup / restore:** saves a `.json` file with all your trips. The app
+  reminds you if you haven't backed up for 2 weeks.
 
-## Run it
+> ⚠️ Because data lives only on the phone, deleting the app, clearing Safari or
+> Chrome website data, or losing the phone deletes your trips. Back up regularly.
 
-Needs Node.js 22.13 or newer.
+## Publishing (one-time setup)
 
-```bash
-npm install
-APP_PASSWORD=choose-a-password npm start
-# open http://localhost:3000
-```
+1. On GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+2. **Actions → "Publish app to GitHub Pages" → Run workflow** (or push any change).
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `APP_TIMEZONE` | `Australia/Sydney` | Time zone the midnight schedules run in (IANA name, e.g. `Australia/Perth`, `Asia/Manila`) |
-| `APP_PASSWORD` | *(none)* | Login password. **Set this if the server can be reached from the internet.** |
-| `SESSION_SECRET` | derived from the password | Signs the login cookie |
-| `DISTANCE_UNIT` | `km` | `km` or `mi` |
-| `PORT` | `3000` | HTTP port |
-| `DATA_DIR` | `./data` | Where the SQLite database (`mileage.db`) and `reports/` are stored. Back this folder up. |
+Every push after that runs the tests and republishes the app. Phones get the new
+version the next time the app is opened twice.
 
-### Docker
+## Development
 
 ```bash
-docker build -t mileage .
-docker run -d -p 3000:3000 -v mileage-data:/app/data \
-  -e APP_PASSWORD=choose-a-password -e APP_TIMEZONE=Australia/Sydney mileage
-```
-
-### Using it on your phone
-
-1. Host it somewhere that stays on, using HTTPS. Good options are a small VPS,
-   Fly.io/Railway/Render with a persistent volume, or a home server behind
-   Tailscale or Cloudflare Tunnel.
-2. Open the URL on your phone.
-   - **iPhone (Safari):** Share → *Add to Home Screen*.
-   - **Android (Chrome):** menu → *Install app*.
-
-## Tests
-
-```bash
+npm install     # dev only: Excel library + tests
+npm start       # http://localhost:8080
 npm test
 ```
+
+The app is plain HTML/CSS/JS in `public/` with no build step. The logic in
+`public/js/` (`logic.js`, `periods.js`, `store.js`) is shared with the Node tests.

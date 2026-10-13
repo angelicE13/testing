@@ -1,21 +1,16 @@
 {
   "name": "mileage-logbook",
-  "version": "1.0.0",
-  "description": "Phone-first mileage logbook with automatic weekly, monthly and quarterly reports",
+  "version": "2.0.0",
+  "description": "Phone-only mileage logbook with automatic weekly, monthly and quarterly reports",
   "type": "module",
-  "main": "src/server.js",
-  "engines": {
-    "node": ">=22.13"
-  },
+  "private": true,
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/server.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+    "start": "node scripts/serve.js",
+    "test": "node --test test/*.test.js",
+    "vendor": "cp node_modules/exceljs/dist/exceljs.bare.min.js public/vendor/exceljs.min.js"
   },
-  "license": "MIT",
-  "dependencies": {
-    "exceljs": "^4.4.0",
-    "express": "^4.22.3",
-    "node-cron": "^4.6.0"
-  }
+  "devDependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "license": "MIT"
 }

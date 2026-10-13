@@ -1,10 +1,15 @@
-// Caches the app shell so the app opens instantly from the home screen.
-// API calls always go to the network (the data lives on the server).
-const CACHE = 'mileage-v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg'];
+// Makes the app work with no signal: every file is stored on the phone.
+// Opens from the cache instantly and fetches updates in the background
+// (the new version shows the next time the app is opened).
+const CACHE = 'mileage-v2';
+const FILES = [
+  './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
+  'js/periods.js', 'js/logic.js', 'js/store.js', 'js/idb.js', 'js/files.js',
+  'vendor/exceljs.min.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
+];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -16,16 +21,21 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
-  // Network first so updates show up straight away; fall back to cache when offline.
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
-      .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
-        return res;
-      })
-      .catch(() => caches.match(e.request)),
+    caches.open(CACHE).then(async (cache) => {
+      const cached = await cache.match(e.request, { ignoreSearch: true });
+      const fresh = fetch(e.request)
+        .then((res) => {
+          if (res.ok) cache.put(e.request, res.clone());
+          return res;
+        })
+        .catch(() => cached);
+      if (cached) {
+        e.waitUntil(fresh);
+        return cached;
+      }
+      return fresh;
+    }),
   );
 });
