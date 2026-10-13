@@ -90,13 +90,16 @@
 
       <details class="card fold">
         <summary>Backup &amp; restore <span class="muted" id="backup-summary"></span></summary>
-        <p class="muted">Your trips are stored only on this phone. Save a backup now and then (to Files, iCloud
-          Drive, Google Drive or email) so you don't lose them if the phone is lost or replaced.</p>
+        <p class="muted">Your trips are stored only on this phone. Each night after 10pm the app reminds you to save
+          a backup file. Save it to the same place each time (e.g. iCloud Drive or Google Drive) and choose
+          <strong>Replace</strong> — it's always called <em>mileage-backup.json</em>, so you keep one up-to-date copy.</p>
         <p class="muted" id="backup-info"></p>
         <div class="row">
           <button class="btn primary" type="button" data-backup>Save backup</button>
           <label class="btn file-btn">Restore backup<input type="file" id="restore" accept="application/json,.json"></label>
         </div>
+        <p class="muted" id="snapshot-info"></p>
+        <button class="btn" type="button" id="restore-snapshot" hidden>Go back to last night's copy</button>
       </details>
 
       <details class="card fold">

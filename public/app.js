@@ -24,7 +24,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.13-7';
+export const APP_VERSION = '2026.10.13-8';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -869,7 +869,38 @@ $('#fy-form').addEventListener('submit', async (e) => {
 });
 
 // ---------- backup ----------
-const BACKUP_NAG_DAYS = 14;
+// Every night at 10pm (or the next time the app is opened after that):
+//  1. an automatic copy is kept inside the app, replacing the previous night's copy;
+//  2. a reminder offers a one-tap backup file. It always has the same name, so saving it
+//     to the same folder replaces the previous file instead of piling up copies.
+const BACKUP_HOUR = 22;
+const BACKUP_FILE = 'mileage-backup.json';
+
+/** The most recent 10pm that has passed. */
+function lastBackupTime(now = new Date()) {
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), BACKUP_HOUR);
+  if (now < t) t.setDate(t.getDate() - 1);
+  return t;
+}
+
+const before = (iso, t) => !iso || new Date(iso) < t;
+
+/** Due once a 10pm has passed since a trip was added or changed and no backup has been saved since. */
+function backupDue() {
+  const t = lastBackupTime();
+  const last = store.meta.lastBackupAt;
+  const unsavedBefore10pm = store.trips.some((x) => {
+    const changed = x.updated_at || x.created_at;
+    return (!last || changed > last) && new Date(changed) < t;
+  });
+  return unsavedBefore10pm && before(store.meta.backupSnoozedAt, t);
+}
+
+async function nightlySnapshot() {
+  if (!store.trips.length || !before(store.meta.snapshotAt, lastBackupTime())) return;
+  await store.setMeta('snapshot', structuredClone(store.exportData()));
+  await store.setMeta('snapshotAt', new Date().toISOString());
+}
 
 function daysSinceBackup() {
   const last = store.meta.lastBackupAt;
@@ -877,25 +908,34 @@ function daysSinceBackup() {
 }
 
 function renderBackupNag() {
-  const host = $('#backup-nag');
-  const days = daysSinceBackup();
-  const due = store.trips.length >= 3 && (days === null || days >= BACKUP_NAG_DAYS);
-  host.innerHTML = due
-    ? `<div class="warn">Your trips are saved only on this phone. ${days === null ? 'You haven\'t made a backup yet.' : `Last backup was ${days} days ago.`}
-       <button class="link" type="button" data-backup>Back up now</button></div>`
+  $('#backup-nag').innerHTML = backupDue()
+    ? `<div class="warn">Time for tonight's backup.
+       <span><button class="link" type="button" data-backup>Save backup</button>
+       <button class="link" type="button" id="snooze-backup">Later</button></span></div>`
     : '';
+  $('#snooze-backup')?.addEventListener('click', async () => {
+    await store.setMeta('backupSnoozedAt', new Date().toISOString());
+    renderBackupNag();
+  });
 }
+
+const when = (iso) => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 
 function renderBackupInfo() {
   const days = daysSinceBackup();
   $('#backup-summary').textContent = days === null ? 'never' : days === 0 ? 'today' : `${days}d ago`;
   $('#backup-info').textContent = `${store.trips.length} trips on this phone. ${
-    days === null ? 'No backup made yet.' : `Last backup ${days === 0 ? 'today' : `${days} day(s) ago`}.`}`;
+    days === null ? 'No backup file saved yet.' : `Last backup file ${days === 0 ? 'today' : `${days} day(s) ago`}.`}`;
+  const snap = store.meta.snapshot;
+  $('#snapshot-info').textContent = snap
+    ? `Nightly copy kept inside the app: ${when(store.meta.snapshotAt)} (${snap.trips.length} trip${snap.trips.length === 1 ? '' : 's'}).`
+    : 'The app keeps a copy of your trips each night at 10pm (or the next time you open it).';
+  $('#restore-snapshot').hidden = !snap;
 }
 
 async function backup() {
   const data = JSON.stringify(store.exportData(), null, 1);
-  const file = new File([data], `mileage-backup-${localDate(new Date(), TIME_ZONE)}.json`, { type: 'application/json' });
+  const file = new File([data], BACKUP_FILE, { type: 'application/json' });
   const result = await deliver(file);
   if (result !== 'cancelled') {
     await store.setMeta('lastBackupAt', new Date().toISOString());
@@ -904,6 +944,24 @@ async function backup() {
   renderBackupInfo();
   renderBackupNag();
   return result;
+}
+
+$('#restore-snapshot').addEventListener('click', async () => {
+  const snap = store.meta.snapshot;
+  if (!snap) return;
+  if (!confirm(`Go back to the nightly copy from ${when(store.meta.snapshotAt)}? Trips added or changed since then will be lost.`)) return;
+  await store.importData(snap);
+  toast(`Restored ${store.trips.length} trips`);
+  renderBackupInfo();
+  await refresh();
+});
+
+// While the app is open, run the nightly backup at 10pm.
+function scheduleBackupCheck() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), BACKUP_HOUR, 0, 5);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  setTimeout(() => { nightlySnapshot().finally(() => { renderBackupNag(); scheduleBackupCheck(); }); }, next - now);
 }
 
 document.addEventListener('click', (e) => {
@@ -944,6 +1002,7 @@ function scheduleMidnightCheck() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && store) {
     checkDueReports().catch(() => {});
+    nightlySnapshot().catch(() => {});
     refresh();
   }
 });
@@ -986,8 +1045,10 @@ async function init() {
   $('#custom-report [name=to]').value = toLocalInput(now).slice(0, 10);
 
   show('log');
+  await nightlySnapshot().catch(() => {});
   await checkDueReports();
   scheduleMidnightCheck();
+  scheduleBackupCheck();
 }
 
 init().catch((err) => toast(err.message));

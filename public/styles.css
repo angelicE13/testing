@@ -263,3 +263,4 @@ select { appearance: auto; }
 .center-dialog { margin: auto; border-radius: 18px; max-width: min(420px, calc(100vw - 32px)); }
 .center-dialog h2 { margin-top: 0; }
 .stack { display: grid; gap: 8px; }
+#backup-nag .link + .link { margin-left: 14px; }
