@@ -28,16 +28,22 @@ home screen. After the first visit it works with no signal.
   straight to the next, it's marked as *between clients* automatically.
 - **+ Add a past trip** is the full form, for trips you forgot to log.
 - **History:** tap a trip to edit or delete it.
-- **Reports:**
-  - weekly (Mon–Sun)
-  - monthly
-  - quarterly (calendar quarters, also labelled with the Australian
-    financial-year quarter)
+- **Breakdown on the home screen** for this week, month, quarter or financial
+  year:
+  - business % vs personal % of all km
+  - ABN % vs TFN % of business km
+- **Reports** (Excel + CSV), each with odometer start/end, car details and the
+  same percentages:
+  - weekly, monthly and quarterly
+  - **financial year** (1 Jul – 30 Jun)
+  - between-clients trips show both ends, e.g. *Acme (ABN) → Blue Co (TFN)*
 
-  A report is created when its period ends: at 12 AM if the app is open,
-  otherwise the next time you open it. Missed periods are caught up. Tap
-  Excel/CSV to save to Files, email it or send it to Drive. ↻ rebuilds a
-  report after you edit trips.
+  Reports are created when the period ends: at 12 AM if the app is open,
+  otherwise the next time you open it. Missed periods are caught up.
+- **ATO 12-week logbook:** pick a start date. The report shows the logbook
+  period, odometer at start and end, total km by odometer (unlogged km counted
+  as private) and your **business-use %**.
+- **Car details** (make, model, engine capacity, rego) are printed on every report.
 - **Backup / restore:** saves a `.json` file with all your trips. The app
   reminds you if you haven't backed up for 2 weeks.
 

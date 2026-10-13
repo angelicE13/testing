@@ -101,3 +101,52 @@ test('backup: export and restore round-trip, bad files rejected', async () => {
   await assert.rejects(b.importData({ hello: 1 }), /not a Mileage Logbook backup/);
   assert.equal(b.trips.length, 1, 'nothing wiped on a bad file');
 });
+
+test('percentages: business/personal of total, ABN/TFN of business', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ trip_type: 'abn', start_odo: 0, end_odo: 30 }));
+  await store.createTrip(trip({ trip_type: 'tfn', start_odo: 30, end_odo: 40, start_at: '2026-10-07T00:00:00Z', end_at: null }));
+  await store.createTrip(trip({ category: 'personal', trip_type: 'home', purpose: '', start_odo: 40, end_odo: 100, start_at: '2026-10-07T02:00:00Z', end_at: null }));
+  const s = summarise(store.trips);
+  assert.deepEqual(
+    [s.total, s.businessPercent, s.personalPercent, s.abnPercent, s.tfnPercent],
+    [100, 40, 60, 75, 25],
+  );
+});
+
+test('between clients shows ABN/TFN at both ends', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ trip_type: 'abn', purpose: 'Acme' })); // ends 1025.5
+  await store.createTrip(trip({
+    trip_type: 'tfn', purpose: '', between_clients: true, from_client: 'Acme', to_client: 'Blue Co',
+    start_odo: 1025.5, end_odo: 1030, start_at: '2026-10-07T00:00:00Z', end_at: null,
+  }));
+  const report = makeReport(store.trips, 'custom', '2026-10-01', '2026-10-31', TZ);
+  assert.equal(report.rows[1].purpose, 'Between clients: Acme (ABN) → Blue Co (TFN)');
+});
+
+test('ATO logbook: 12 weeks, odometer totals, business-use %, car details', async () => {
+  const store = await newStore();
+  await store.saveCar({ make: 'Toyota', model: 'RAV4', engine: '2.5L', rego: 'ABC123' });
+  await store.createTrip(trip({ start_odo: 1000, end_odo: 1030 })); // business 30
+  // 20 km gap not logged, then 50 personal
+  await store.createTrip(trip({ category: 'personal', trip_type: 'personal_travel', purpose: '', start_odo: 1050, end_odo: 1100, start_at: '2026-10-08T00:00:00Z', end_at: null }));
+  const r = await store.generateLogbook('2026-10-05', new Date('2026-10-10T00:00:00Z'));
+  assert.equal(r.period_end, '2026-12-27');
+  assert.deepEqual(r.odometer, { start: 1000, end: 1100 });
+  assert.equal(r.logbook.totalByOdometer, 100);
+  assert.equal(r.logbook.unlogged, 20);
+  assert.equal(r.logbook.businessUsePercent, 30);
+  assert.equal(r.logbook.inProgress, true);
+  assert.match(toCsv(r), /Toyota RAV4 · 2\.5L · Rego ABC123/);
+  assert.match(toCsv(r), /Business-use % \(ATO logbook\),30/);
+});
+
+test('financial year report is due after 30 June', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ start_at: '2026-03-02T00:00:00Z', end_at: null }));
+  const created = await store.generateDue(new Date('2026-06-30T15:00:00Z')); // 1 Jul, 1am Melbourne
+  const fy = created.find((r) => r.period_type === 'financial_year');
+  assert.equal(fy.period_start, '2025-07-01');
+  assert.equal(fy.label, 'FY2025-26 (1 Jul 2025 – 30 Jun 2026)');
+});

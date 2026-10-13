@@ -8,7 +8,8 @@ async function xlsxBlob(report) {
   wb.creator = 'Mileage Logbook';
   const ws = wb.addWorksheet('Logbook', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.addRow([report.title]).font = { bold: true, size: 14 };
-  ws.addRow([]);
+  const car = report.car;
+  ws.addRow([car ? `Car: ${[car.make, car.model].filter(Boolean).join(' ')} · ${car.engine || '-'} · Rego ${car.rego || '-'}` : '']);
   const header = ws.addRow(COLUMNS.map(([, h]) => h));
   header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E79' } };
@@ -19,9 +20,9 @@ async function xlsxBlob(report) {
   const s = wb.addWorksheet('Summary');
   s.addRow([report.title]).font = { bold: true, size: 14 };
   s.addRow([]);
-  for (const line of summaryLines(report.summary)) s.addRow(line);
-  s.getColumn(1).width = 28;
-  s.getColumn(2).width = 14;
+  for (const line of summaryLines(report)) s.addRow(line);
+  s.getColumn(1).width = 34;
+  s.getColumn(2).width = 28;
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

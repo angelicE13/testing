@@ -22,18 +22,30 @@ export function recentClients(trips, limit = 8) {
 
 /** The client you are leaving, if the last trip today ended at a client (for "between clients"). */
 export function comingFromClient(trips, startOdo, startAt, timeZone) {
+  const none = { client: '', type: '' };
   const last = [...trips].sort(byStartDesc).find((t) => t.end_odo !== null);
-  if (!last || last.category !== 'business' || last.end_odo !== startOdo) return '';
-  if (localDate(last.end_at, timeZone) !== localDate(startAt, timeZone)) return '';
-  return last.between_clients ? last.to_client : last.purpose;
+  if (!last || last.category !== 'business' || last.end_odo !== startOdo) return none;
+  if (localDate(last.end_at, timeZone) !== localDate(startAt, timeZone)) return none;
+  return { client: last.between_clients ? last.to_client : last.purpose, type: last.trip_type };
 }
 
-export const PERIOD_TYPES = ['weekly', 'monthly', 'quarterly'];
+/** ABN/TFN of the client a between-clients trip started from (stored, or worked out from history). */
+function fromTypeOf(t, allTrips) {
+  if (t.from_type) return t.from_type;
+  const prev = [...allTrips].sort(byStartDesc).find((x) => x.start_at < t.start_at && x.category === 'business'
+    && (x.between_clients ? x.to_client : x.purpose) === t.from_client);
+  return prev ? prev.trip_type : '';
+}
+
+export const PERIOD_TYPES = ['weekly', 'monthly', 'quarterly', 'financial_year'];
+export const LOGBOOK_DAYS = 84; // ATO minimum: 12 continuous weeks
 
 export const CATEGORIES = {
   personal: ['personal_travel', 'home', 'work'],
   business: ['tfn', 'abn'],
 };
+
+const SHORT_TYPE = { tfn: 'TFN', abn: 'ABN', personal_travel: 'Personal', home: 'Home', work: 'Work' };
 
 export const TRIP_TYPE_LABELS = {
   personal_travel: 'Personal travel',
@@ -111,6 +123,7 @@ export function normaliseTrip(input) {
     purpose,
     between_clients: betweenClients,
     from_client: fromClient,
+    from_type: betweenClients && CATEGORIES.business.includes(input.from_type) ? input.from_type : '',
     to_client: toClient,
     notes: text(input.notes),
     start_odo_manual: Boolean(input.start_odo_manual),
@@ -151,15 +164,16 @@ export function tripsInRange(trips, start, end, timeZone) {
     .sort((a, b) => -byStartDesc(a, b));
 }
 
-function purposeText(t) {
+function purposeText(t, allTrips) {
   if (t.between_clients) {
-    const route = `Between clients: ${t.from_client} → ${t.to_client}`;
+    const from = fromTypeOf(t, allTrips);
+    const route = `Between clients: ${t.from_client}${from ? ` (${SHORT_TYPE[from]})` : ''} → ${t.to_client} (${SHORT_TYPE[t.trip_type]})`;
     return t.purpose ? `${t.purpose} (${route})` : route;
   }
   return t.purpose || TRIP_TYPE_LABELS[t.trip_type];
 }
 
-export function buildRows(trips, timeZone) {
+export function buildRows(trips, timeZone, allTrips = trips) {
   return trips.map((t) => ({
     date: localDate(t.start_at, timeZone),
     start_time: localTime(t.start_at, timeZone),
@@ -167,7 +181,7 @@ export function buildRows(trips, timeZone) {
     end_time: t.end_at ? localTime(t.end_at, timeZone) : '',
     category: t.category === 'business' ? 'Business' : 'Personal',
     type: TRIP_TYPE_LABELS[t.trip_type],
-    purpose: purposeText(t),
+    purpose: purposeText(t, allTrips),
     between_clients: t.between_clients ? 'Yes' : 'No',
     start_odo: t.start_odo,
     end_odo: t.end_odo,
@@ -176,20 +190,27 @@ export function buildRows(trips, timeZone) {
   }));
 }
 
+const pct = (part, whole) => (whole ? round1((part / whole) * 100) : 0);
+
 export function summarise(trips) {
   const sum = (list) => round1(list.reduce((acc, t) => acc + (t.distance || 0), 0));
   const business = trips.filter((t) => t.category === 'business');
   const total = sum(trips);
   const businessKm = sum(business);
+  const abn = sum(business.filter((t) => t.trip_type === 'abn'));
+  const tfn = sum(business.filter((t) => t.trip_type === 'tfn'));
   return {
     trips: trips.length,
     total,
     business: businessKm,
     personal: sum(trips.filter((t) => t.category === 'personal')),
-    tfn: sum(business.filter((t) => t.trip_type === 'tfn')),
-    abn: sum(business.filter((t) => t.trip_type === 'abn')),
+    abn,
+    tfn,
     betweenClients: sum(business.filter((t) => t.between_clients)),
-    businessPercent: total ? round1((businessKm / total) * 100) : 0,
+    businessPercent: pct(businessKm, total),
+    personalPercent: total ? round1(100 - pct(businessKm, total)) : 0,
+    abnPercent: pct(abn, businessKm), // ABN and TFN are shares of business km
+    tfnPercent: businessKm ? round1(100 - pct(abn, businessKm)) : 0,
   };
 }
 
@@ -200,17 +221,42 @@ export const COLUMNS = [
   ['distance', `Distance (${UNIT})`], ['notes', 'Notes'],
 ];
 
-export function summaryLines(s) {
-  return [
+/** Label/value lines shown under every report (CSV, Excel and on screen). */
+export function summaryLines(report) {
+  const s = report.summary;
+  const lines = [];
+  const car = report.car || {};
+  if (car.make || car.model || car.rego) {
+    lines.push(['Car', [car.make, car.model].filter(Boolean).join(' ')]);
+    lines.push(['Engine capacity', car.engine || '']);
+    lines.push(['Registration', car.rego || '']);
+  }
+  lines.push(['Period', `${report.period_start} to ${report.period_end}`]);
+  if (report.odometer) {
+    lines.push(['Odometer at start of period', report.odometer.start ?? '']);
+    lines.push(['Odometer at end of period', report.odometer.end ?? '']);
+  }
+  if (report.logbook) {
+    const l = report.logbook;
+    lines.push([`Total ${UNIT} travelled (odometer)`, l.totalByOdometer]);
+    lines.push([`Unlogged ${UNIT} (treated as private)`, l.unlogged]);
+    lines.push(['Business-use % (ATO logbook)', l.businessUsePercent]);
+    if (l.inProgress) lines.push(['Status', `In progress — ${l.daysElapsed} of ${LOGBOOK_DAYS} days`]);
+  }
+  lines.push(
     ['Total trips', s.trips],
-    [`Total distance (${UNIT})`, s.total],
-    [`Business (${UNIT})`, s.business],
-    [`  TFN (${UNIT})`, s.tfn],
-    [`  ABN (${UNIT})`, s.abn],
-    [`  Between clients (${UNIT})`, s.betweenClients],
-    [`Personal (${UNIT})`, s.personal],
-    ['Business use %', s.businessPercent],
-  ];
+    [`Total ${UNIT} logged`, s.total],
+    [`Business ${UNIT}`, s.business],
+    ['Business %', s.businessPercent],
+    [`Personal ${UNIT}`, s.personal],
+    ['Personal %', s.personalPercent],
+    [`  ABN ${UNIT}`, s.abn],
+    ['  ABN % of business', s.abnPercent],
+    [`  TFN ${UNIT}`, s.tfn],
+    ['  TFN % of business', s.tfnPercent],
+    [`  Between clients ${UNIT}`, s.betweenClients],
+  );
+  return lines;
 }
 
 function csvCell(v) {
@@ -221,11 +267,12 @@ function csvCell(v) {
 }
 
 export function toCsv(report) {
-  const lines = [csvCell(report.title), ''];
+  const car = report.car;
+  const lines = [csvCell(report.title), csvCell(car ? `Car: ${[car.make, car.model].filter(Boolean).join(' ')} · ${car.engine || '-'} · Rego ${car.rego || '-'}` : '')];
   lines.push(COLUMNS.map(([, h]) => csvCell(h)).join(','));
   for (const r of report.rows) lines.push(COLUMNS.map(([k]) => csvCell(r[k])).join(','));
   lines.push('', 'Summary');
-  for (const [k, v] of summaryLines(report.summary)) lines.push(`${csvCell(k)},${csvCell(v)}`);
+  for (const [k, v] of summaryLines(report)) lines.push(`${csvCell(k)},${csvCell(v)}`);
   return `﻿${lines.join('\r\n')}\r\n`; // BOM so Excel reads UTF-8 (→, accents) correctly
 }
 
@@ -234,19 +281,43 @@ export function fileBase(report) {
 }
 
 /** A report is a snapshot of the trips in a period at the time it was made. */
-export function makeReport(trips, type, start, end, timeZone, now = new Date()) {
+export function makeReport(trips, type, start, end, timeZone, now = new Date(), car = null) {
   const inRange = tripsInRange(trips, start, end, timeZone);
   const label = periodLabel(type, start, end);
-  return {
+  const summary = summarise(inRange);
+  const odometer = inRange.length
+    ? { start: inRange[0].start_odo, end: Math.max(...inRange.map((t) => t.end_odo)) }
+    : null;
+  const report = {
     period_type: type,
     period_start: start,
     period_end: end,
     label,
-    title: `Mileage logbook – ${label}`,
-    rows: buildRows(inRange, timeZone),
-    summary: summarise(inRange),
+    title: type === 'logbook' ? `ATO car logbook – ${label.replace('ATO logbook ', '')}` : `Mileage logbook – ${label}`,
+    car: car && Object.values(car).some(Boolean) ? { ...car } : null,
+    odometer,
+    rows: buildRows(inRange, timeZone, trips),
+    summary,
     generated_at: now.toISOString(),
   };
+  if (type === 'logbook') {
+    const today = localDate(now, timeZone);
+    const totalByOdometer = odometer ? round1(odometer.end - odometer.start) : 0;
+    const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+    report.logbook = {
+      totalByOdometer,
+      unlogged: round1(Math.max(0, totalByOdometer - summary.total)),
+      businessUsePercent: pct(summary.business, totalByOdometer),
+      inProgress: today <= end,
+      daysElapsed: Math.max(0, Math.min(LOGBOOK_DAYS, days)),
+    };
+  }
+  return report;
+}
+
+/** 12-week (84-day) ATO logbook period starting on the given date. */
+export function logbookPeriod(start) {
+  return { start, end: addDays(start, LOGBOOK_DAYS - 1) };
 }
 
 /**

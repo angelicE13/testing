@@ -54,6 +54,10 @@ export function periodContaining(type, day) {
     const qm = Math.floor((m - 1) / 3) * 3 + 1;
     return { start: firstOfMonth(y, qm), end: addDays(firstOfMonth(y, qm + 3), -1) };
   }
+  if (type === 'financial_year') {
+    const fyStartYear = m >= 7 ? y : y - 1; // Australian FY: 1 July – 30 June
+    return { start: `${fyStartYear}-07-01`, end: `${fyStartYear + 1}-06-30` };
+  }
   throw new Error(`Unknown period type: ${type}`);
 }
 
@@ -86,5 +90,10 @@ export function periodLabel(type, start, end) {
     const q = Math.floor(d.getUTCMonth() / 3) + 1;
     return `Q${q} ${d.getUTCFullYear()} (${financialQuarter(start)})`;
   }
+  if (type === 'financial_year') {
+    const y = d.getUTCFullYear();
+    return `FY${y}-${String(y + 1).slice(2)} (1 Jul ${y} – 30 Jun ${y + 1})`;
+  }
+  if (type === 'logbook') return `ATO logbook ${prettyDate(start)} – ${prettyDate(end)}`;
   return `${prettyDate(start)} – ${prettyDate(end)}`;
 }

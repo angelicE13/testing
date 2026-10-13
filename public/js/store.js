@@ -1,7 +1,7 @@
 // Trip and report storage. Works over any adapter with getAll/put/delete/clear —
 // IndexedDB on the phone (see idb.js), an in-memory one in tests.
 import {
-  ValidationError, activeTrip, duePeriods, lastEndOdo, makeReport, normaliseTrip, odoWarnings,
+  ValidationError, activeTrip, duePeriods, lastEndOdo, logbookPeriod, makeReport, normaliseTrip, odoWarnings,
 } from './logic.js';
 import { localDate } from './periods.js';
 
@@ -82,7 +82,7 @@ export class Store {
   // ---------- reports ----------
 
   async generateReport(type, start, end, now = new Date()) {
-    const report = makeReport(this.trips, type, start, end, this.timeZone, now);
+    const report = makeReport(this.trips, type, start, end, this.timeZone, now, this.meta.car);
     const existing = this.reports.find(
       (r) => r.period_type === type && r.period_start === start && r.period_end === end,
     );
@@ -102,6 +102,18 @@ export class Store {
     return created;
   }
 
+  /** ATO 12-week logbook starting on the given date (can be made while still in progress). */
+  async generateLogbook(start, now = new Date()) {
+    const { end } = logbookPeriod(start);
+    return this.generateReport('logbook', start, end, now);
+  }
+
+  async saveCar(car) {
+    const clean = Object.fromEntries(['make', 'model', 'engine', 'rego'].map((k) => [k, String(car[k] || '').trim().slice(0, 60)]));
+    await this.setMeta('car', clean);
+    return clean;
+  }
+
   async regenerate(id) {
     const r = this.reports.find((x) => x.id === id);
     if (!r) throw new ValidationError('Report not found');
@@ -114,7 +126,7 @@ export class Store {
   }
 
   listReports() {
-    const order = { weekly: 0, monthly: 1, quarterly: 2, custom: 3 };
+    const order = { weekly: 0, monthly: 1, quarterly: 2, financial_year: 3, logbook: 4, custom: 5 };
     return [...this.reports].sort((a, b) => (a.period_end < b.period_end ? 1 : a.period_end > b.period_end ? -1
       : order[a.period_type] - order[b.period_type]));
   }

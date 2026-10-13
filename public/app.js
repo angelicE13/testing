@@ -3,7 +3,9 @@
 import { Store, memoryAdapter } from './js/store.js';
 import { idbAdapter } from './js/idb.js';
 import { periodContaining, localDate } from './js/periods.js';
-import { summarise, tripsInRange, byStartDesc, recentClients, comingFromClient, UNIT } from './js/logic.js';
+import {
+  summarise, tripsInRange, byStartDesc, recentClients, comingFromClient, logbookPeriod, UNIT,
+} from './js/logic.js';
 import { deliver, reportFile } from './js/files.js';
 
 const TYPES = {
@@ -22,7 +24,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.13-5';
+export const APP_VERSION = '2026.10.13-6';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -70,7 +72,7 @@ function toast(msg) {
 function summary() {
   const today = localDate(new Date(), TIME_ZONE);
   const out = {};
-  for (const type of ['weekly', 'monthly', 'quarterly']) {
+  for (const type of ['weekly', 'monthly', 'quarterly', 'financial_year']) {
     const { start, end } = periodContaining(type, today);
     out[type] = summarise(tripsInRange(store.trips, start, end, TIME_ZONE));
   }
@@ -303,13 +305,47 @@ const QUICK_LABEL = {
   abn: 'Business · ABN', tfn: 'Business · TFN', personal_travel: 'Personal', work: 'To work', home: 'To home',
 };
 
+const PERIODS = [['weekly', 'Week'], ['monthly', 'Month'], ['quarterly', 'Quarter'], ['financial_year', 'Fin. year']];
+
+/** A 100% bar split into two parts, with the numbers written beside it (never colour alone). */
+function splitBar(parts) {
+  const total = parts.reduce((a, p) => a + p.km, 0);
+  const bar = total
+    ? parts.filter((p) => p.km > 0).map((p) => `<span class="seg-${p.cls}" style="flex:${p.km}" title="${p.label}: ${num(p.km)} ${unit()} (${p.pct}%)"></span>`).join('')
+    : '<span class="seg-empty"></span>';
+  return `
+    <div class="bar" role="img" aria-label="${parts.map((p) => `${p.label} ${p.pct}%`).join(', ')}">${bar}</div>
+    <div class="bar-legend">${parts.map((p) => `
+      <span><i class="dot seg-${p.cls}"></i>${p.label} <strong>${p.pct}%</strong> <span class="muted">${num(p.km)} ${unit()}</span></span>`).join('')}
+    </div>`;
+}
+
 function renderStats() {
-  const s = state.summary;
-  if (!s) return;
-  const tile = (k, d) => `
-    <div class="stat"><div class="k">${k}</div><div class="v">${num(d.total)}</div>
-    <div class="s">${unit()} · ${d.businessPercent}% business</div></div>`;
-  $('#stats').innerHTML = tile('This week', s.weekly) + tile('This month', s.monthly) + tile('Quarter', s.quarterly);
+  const all = state.summary;
+  if (!all) return;
+  const period = prefs('breakdownPeriod', 'monthly');
+  const s = all[period];
+  $('#stats').innerHTML = `
+    <div class="card breakdown">
+      <div class="chips period">${PERIODS.map(([k, l]) => `<button type="button" data-period="${k}" class="${k === period ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="big-total">${num(s.total)} <span>${unit()} · ${s.trips} trip${s.trips === 1 ? '' : 's'}</span></div>
+      <h3>Business vs personal</h3>
+      ${splitBar([
+        { cls: 'business', label: 'Business', km: s.business, pct: s.businessPercent },
+        { cls: 'personal', label: 'Personal', km: s.personal, pct: s.personalPercent },
+      ])}
+      <h3>Business: ABN vs TFN</h3>
+      ${splitBar([
+        { cls: 'abn', label: 'ABN', km: s.abn, pct: s.abnPercent },
+        { cls: 'tfn', label: 'TFN', km: s.tfn, pct: s.tfnPercent },
+      ])}
+    </div>`;
+  $('#stats .period').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-period]');
+    if (!b) return;
+    setPref('breakdownPeriod', b.dataset.period);
+    renderStats();
+  });
 }
 
 function renderStart() {
@@ -355,7 +391,8 @@ function renderStart() {
       return;
     }
     const startAt = new Date().toISOString();
-    const from = q.category === 'business' ? comingFromClient(store.trips, Number(startOdo), startAt, TIME_ZONE) : '';
+    const from = q.category === 'business'
+      ? comingFromClient(store.trips, Number(startOdo), startAt, TIME_ZONE) : { client: '', type: '' };
     try {
       await store.createTrip({
         category: q.category,
@@ -363,8 +400,9 @@ function renderStart() {
         start_at: startAt,
         start_odo: startOdo,
         start_odo_manual: editing && odo !== null && Number(startOdo) !== odo,
-        between_clients: Boolean(from),
-        from_client: from,
+        between_clients: Boolean(from.client),
+        from_client: from.client,
+        from_type: from.type,
       });
       state.editOdo = false;
       toast('Trip started — drive safe');
@@ -458,7 +496,7 @@ function renderActive() {
     await setClient(e.target.value);
   });
   $('#not-from')?.addEventListener('click', async () => {
-    await store.updateTrip(t.id, { between_clients: false, from_client: '', to_client: '', purpose: client || '' });
+    await store.updateTrip(t.id, { between_clients: false, from_client: '', from_type: '', to_client: '', purpose: client || '' });
     await refresh();
   });
   host.querySelector('.end-mode').addEventListener('click', (e) => {
@@ -559,6 +597,10 @@ function openEdit(trip) {
 $('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog').close());
 
 // ---------- Reports view ----------
+const REPORT_BADGE = {
+  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Financial year', logbook: 'ATO logbook', custom: 'Custom',
+};
+
 function renderReports() {
   const reports = store.listReports();
   const host = $('#reports');
@@ -569,9 +611,11 @@ function renderReports() {
   host.innerHTML = reports.map((r) => `
     <div class="card report">
       <div>
-        <span class="badge">${esc(r.period_type)}</span>
+        <span class="badge">${esc(REPORT_BADGE[r.period_type] || r.period_type)}</span>
         <div><strong>${esc(r.label)}</strong></div>
-        <div class="muted">${r.summary.trips} trip${r.summary.trips === 1 ? '' : 's'} · ${num(r.summary.total)} ${unit()} · ${r.summary.businessPercent}% business</div>
+        <div class="muted">${r.summary.trips} trip${r.summary.trips === 1 ? '' : 's'} · ${num(r.summary.total)} ${unit()}</div>
+        <div class="muted">Business ${r.summary.businessPercent}% (ABN ${r.summary.abnPercent}% · TFN ${r.summary.tfnPercent}%) · Personal ${r.summary.personalPercent}%</div>
+        ${r.logbook ? `<div class="muted"><strong>ATO business-use: ${r.logbook.businessUsePercent}%</strong>${r.logbook.inProgress ? ` · in progress, day ${r.logbook.daysElapsed} of 84` : ''}</div>` : ''}
         <div class="muted">Made ${esc(new Date(r.generated_at).toLocaleString())}</div>
       </div>
       <div class="actions">
@@ -616,6 +660,65 @@ $('#custom-report').addEventListener('submit', async (e) => {
     toast(err.message);
   }
   return undefined;
+});
+
+// ---------- car details, ATO logbook, financial year ----------
+function renderReportForms() {
+  const car = store.meta.car || {};
+  const f = $('#car-form');
+  for (const k of ['make', 'model', 'engine', 'rego']) f.elements[k].value = car[k] || '';
+
+  const lb = $('#logbook-form');
+  if (!lb.elements.start.value) lb.elements.start.value = localDate(new Date(), TIME_ZONE);
+  showLogbookEnd();
+
+  const today = localDate(new Date(), TIME_ZONE);
+  const current = Number(periodContaining('financial_year', today).start.slice(0, 4));
+  const first = store.trips.length
+    ? Number(periodContaining('financial_year', store.trips.map((t) => localDate(t.start_at, TIME_ZONE)).sort()[0]).start.slice(0, 4))
+    : current;
+  const sel = $('#fy-form').elements.fy;
+  sel.innerHTML = Array.from({ length: current - first + 1 }, (_, i) => current - i)
+    .map((y) => `<option value="${y}">FY${y}-${String(y + 1).slice(2)} (Jul ${y} – Jun ${y + 1})</option>`).join('');
+}
+
+function showLogbookEnd() {
+  const start = $('#logbook-form').elements.start.value;
+  $('#logbook-end').textContent = start ? `Runs 12 weeks: ${start} to ${logbookPeriod(start).end}` : '';
+}
+$('#logbook-form').elements.start.addEventListener('input', showLogbookEnd);
+
+$('#car-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  await store.saveCar(Object.fromEntries(fd));
+  toast('Car details saved — rebuild (↻) older reports to include them');
+});
+
+$('#logbook-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const start = e.target.elements.start.value;
+  if (!start) return toast('Choose the start date');
+  try {
+    const report = await store.generateLogbook(start);
+    renderReports();
+    await deliver(await reportFile(report, 'xlsx'));
+  } catch (err) {
+    toast(err.message);
+  }
+  return undefined;
+});
+
+$('#fy-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const y = Number(e.target.elements.fy.value);
+  try {
+    const report = await store.generateReport('financial_year', `${y}-07-01`, `${y + 1}-06-30`);
+    renderReports();
+    await deliver(await reportFile(report, 'xlsx'));
+  } catch (err) {
+    toast(err.message);
+  }
 });
 
 // ---------- backup ----------
@@ -705,7 +808,7 @@ function show(view) {
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('#title').textContent = TITLES[view];
   if (view === 'history') renderHistory();
-  if (view === 'reports') { renderReports(); renderBackupInfo(); }
+  if (view === 'reports') { renderReports(); renderReportForms(); renderBackupInfo(); }
   if (view === 'log') refresh();
   window.scrollTo(0, 0);
 }
