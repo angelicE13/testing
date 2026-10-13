@@ -30,7 +30,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.14-4';
+export const APP_VERSION = '2026.10.14-5';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -366,14 +366,15 @@ function renderStart() {
   const editing = odo === null || state.editOdo;
   host.innerHTML = `
     <div class="quick">
-      <div class="odo-line">
-        ${editing ? `
-          <label class="odo-edit">Odometer now
-            <input type="number" inputmode="decimal" step="0.1" min="0" id="start-odo" value="${odo ?? ''}" placeholder="e.g. 45210">
-          </label>`
-        : `<div><div class="odo-label-sm">Odometer</div><div class="odo-big">${num(odo)} <span>${unit()}</span></div></div>
-           <button class="link" type="button" id="change-odo">Change</button>`}
-      </div>
+      ${editing ? `
+        <label class="odo-box editing">
+          <span class="odo-box-head"><span>Odometer now</span>${odo !== null ? '<button class="link" type="button" id="cancel-odo">Cancel</button>' : ''}</span>
+          <input type="number" inputmode="decimal" step="0.1" min="0" id="start-odo" value="${odo ?? ''}" placeholder="e.g. 45210">
+        </label>`
+      : `<button class="odo-box" type="button" id="change-odo" aria-label="Odometer ${num(odo)} ${unit()}. Tap to change">
+          <span class="odo-box-head"><span>Odometer</span><span class="odo-hint">✎ Tap to change</span></span>
+          <span class="odo-big">${num(odo)} <span>${unit()}</span></span>
+        </button>`}
       <h2 class="quick-title">Tap to start a trip</h2>
       <div class="tiles">
         ${QUICK.map((q) => `
@@ -389,6 +390,11 @@ function renderStart() {
     state.editOdo = true;
     renderStart();
     $('#start-odo').select();
+  });
+  $('#cancel-odo')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    state.editOdo = false;
+    renderStart();
   });
   $('#add-past').addEventListener('click', openPast);
   host.querySelector('.tiles').addEventListener('click', async (e) => {

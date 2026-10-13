@@ -350,3 +350,21 @@ select { appearance: auto; }
 .create-type button { min-height: 38px; padding: 6px 14px; }
 .claim-row.sub { padding: 2px 0 2px 14px; border-top: none; font-size: .9rem; color: var(--muted); }
 .expense.other { border-left-color: var(--muted); }
+
+/* ---- odometer panel (tap to change) ---- */
+.odo-box {
+  display: block; width: 100%; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px 8px; margin: 0;
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / .08);
+}
+.odo-box:active { transform: scale(.99); }
+.odo-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.odo-box-head { display: flex; justify-content: space-between; align-items: center; font-size: .75rem; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.odo-hint { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--primary); font-size: .8rem; }
+.odo-box .odo-big { display: block; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.odo-box.editing { cursor: default; }
+.odo-box.editing input { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; margin: 4px 0 2px; background: var(--card); }
+.odo-box .link { text-transform: none; letter-spacing: 0; font-size: .85rem; padding: 0; }
+.odo-box.editing input::-webkit-outer-spin-button, .odo-box.editing input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.odo-box.editing input { -moz-appearance: textfield; appearance: textfield; }
