@@ -74,6 +74,20 @@ export class Store {
     return this.updateTrip(id, { end_odo: endOdo, end_at: end_at || new Date().toISOString() });
   }
 
+  /** Put back a trip that was just deleted (Undo). */
+  async restoreTrip(trip) {
+    await this.adapter.put('trips', trip);
+    this.trips = [...this.trips.filter((t) => t.id !== trip.id), trip];
+  }
+
+  /** Deletes every trip and report on this device (car details and settings are kept). */
+  async clearAll() {
+    await this.adapter.clear('trips');
+    await this.adapter.clear('reports');
+    this.trips = [];
+    this.reports = [];
+  }
+
   async deleteTrip(id) {
     await this.adapter.delete('trips', id);
     this.trips = this.trips.filter((t) => t.id !== id);

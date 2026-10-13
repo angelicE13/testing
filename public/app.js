@@ -24,7 +24,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.13-6';
+export const APP_VERSION = '2026.10.13-7';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -60,12 +60,18 @@ function setPref(key, value) {
 }
 
 let toastTimer;
-function toast(msg) {
+/** Short message at the bottom; optionally with one action button (e.g. Undo). */
+function toast(msg, { action, onAction, ms = 3500 } = {}) {
   const el = $('#toast');
-  el.textContent = msg;
+  const btn = $('#toast-action');
+  $('#toast-text').textContent = msg;
+  btn.textContent = action || '';
+  btn.hidden = !action;
+  btn.onclick = action ? () => { el.classList.remove('show'); onAction(); } : null;
+  el.classList.toggle('has-action', Boolean(action));
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+  toastTimer = setTimeout(() => el.classList.remove('show'), action ? Math.max(ms, 6000) : ms);
 }
 
 // ---------- data ----------
@@ -551,7 +557,11 @@ function openPast() {
 // ---------- History view ----------
 function renderHistory() {
   const host = $('#history');
-  if (!state.trips.length) {
+  const n = state.trips.length;
+  $('#history-count').textContent = n ? `${n} trip${n === 1 ? '' : 's'}` : '';
+  $('#clear-all').hidden = !n;
+  $('#swipe-hint').hidden = !n;
+  if (!n) {
     host.innerHTML = '<p class="empty">No trips yet. Log your first one from the Log tab.</p>';
     return;
   }
@@ -569,19 +579,119 @@ function renderHistory() {
         const what = t.between_clients ? `${t.from_client} → ${t.to_client}` : t.purpose || TYPE_LABEL[t.trip_type];
         const end = t.end_odo === null ? 'in progress' : `${num(t.start_odo)} → ${num(t.end_odo)}`;
         return `
-          <button class="trip ${t.category}" type="button" data-id="${t.id}">
-            <span class="what">${esc(what)}</span>
-            <span class="km">${t.distance === null ? '…' : `${num(t.distance)} ${unit()}`}</span>
-            <span class="meta">${esc(TYPE_LABEL[t.trip_type])} · ${esc(time(t.start_at))}${t.end_at ? `–${esc(time(t.end_at))}` : ''}</span>
-            <span class="meta">${end}</span>
-          </button>`;
+          <div class="swipe" data-id="${t.id}">
+            <button class="swipe-delete" type="button" data-delete="${t.id}" tabindex="-1">Delete</button>
+            <button class="trip ${t.category}" type="button" data-id="${t.id}">
+              <span class="what">${esc(what)}</span>
+              <span class="km">${t.distance === null ? '…' : `${num(t.distance)} ${unit()}`}</span>
+              <span class="meta">${esc(TYPE_LABEL[t.trip_type])} · ${esc(time(t.start_at))}${t.end_at ? `–${esc(time(t.end_at))}` : ''}</span>
+              <span class="meta">${end}</span>
+            </button>
+          </div>`;
       }).join('')}`;
   }).join('');
 }
 
+async function deleteWithUndo(id) {
+  const trip = store.getTrip(id);
+  if (!trip) return;
+  await store.deleteTrip(id);
+  await refresh();
+  renderHistory();
+  toast('Trip deleted', {
+    action: 'Undo',
+    onAction: async () => {
+      await store.restoreTrip(trip);
+      await refresh();
+      renderHistory();
+    },
+  });
+}
+
+// Swipe a trip left to reveal Delete. Vertical movement still scrolls the list.
+const SWIPE_OPEN = 96;
+let swipe = null;
+let suppressClick = false;
+
+function closeSwipes(except) {
+  $$('#history .swipe.open').forEach((row) => {
+    if (row === except) return;
+    row.classList.remove('open');
+    $('.trip', row).style.transform = '';
+  });
+}
+
+$('#history').addEventListener('pointerdown', (e) => {
+  const card = e.target.closest('.trip');
+  if (!card) return;
+  const row = card.parentElement;
+  swipe = { row, card, x: e.clientX, y: e.clientY, base: row.classList.contains('open') ? -SWIPE_OPEN : 0, dx: 0, active: false };
+});
+
+$('#history').addEventListener('pointermove', (e) => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.x;
+  const dy = e.clientY - swipe.y;
+  if (!swipe.active) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // scrolling
+    if (Math.abs(dx) < 8) return;
+    swipe.active = true;
+    closeSwipes(swipe.row);
+    swipe.row.classList.add('dragging');
+    swipe.card.style.transition = 'none';
+  }
+  swipe.dx = dx;
+  const x = Math.min(0, Math.max(-SWIPE_OPEN * 1.4, swipe.base + dx));
+  swipe.card.style.transform = `translateX(${x}px)`;
+});
+
+function endSwipe() {
+  if (!swipe) return;
+  const { row, card, active, base, dx } = swipe;
+  swipe = null;
+  if (!active) return;
+  suppressClick = true;
+  row.classList.remove('dragging');
+  card.style.transition = '';
+  const open = base + dx < -SWIPE_OPEN / 2;
+  row.classList.toggle('open', open);
+  card.style.transform = open ? `translateX(${-SWIPE_OPEN}px)` : '';
+}
+$('#history').addEventListener('pointerup', endSwipe);
+$('#history').addEventListener('pointercancel', endSwipe);
+
 $('#history').addEventListener('click', (e) => {
+  if (suppressClick) { suppressClick = false; return; }
+  const del = e.target.closest('[data-delete]');
+  if (del) { deleteWithUndo(Number(del.dataset.delete)); return; }
   const b = e.target.closest('.trip');
-  if (b) openEdit(state.trips.find((t) => t.id === Number(b.dataset.id)));
+  if (!b) return;
+  if (b.parentElement.classList.contains('open')) { closeSwipes(); return; }
+  closeSwipes();
+  openEdit(state.trips.find((t) => t.id === Number(b.dataset.id)));
+});
+
+// Clear everything (asks first, offers a backup)
+$('#clear-all').addEventListener('click', () => {
+  const n = store.trips.length;
+  $('#clear-count').textContent = `${n} trip${n === 1 ? '' : 's'}`;
+  $('#clear-dialog').showModal();
+});
+
+$('#clear-dialog').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-clear]');
+  if (!b) return;
+  const dialog = $('#clear-dialog');
+  if (b.dataset.clear === 'cancel') { dialog.close(); return; }
+  if (b.dataset.clear === 'backup') {
+    const result = await backup();
+    if (result === 'cancelled') { toast('Backup cancelled — nothing was deleted'); dialog.close(); return; }
+  }
+  dialog.close();
+  await store.clearAll();
+  await refresh();
+  renderHistory();
+  toast('All trips cleared');
 });
 
 function openEdit(trip) {
@@ -598,32 +708,62 @@ $('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog')
 
 // ---------- Reports view ----------
 const REPORT_BADGE = {
-  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Financial year', logbook: 'ATO logbook', custom: 'Custom',
+  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Fin. year', logbook: 'ATO logbook', custom: 'Custom',
 };
 
 function renderReports() {
   const reports = store.listReports();
+  const types = Object.keys(REPORT_BADGE).filter((k) => reports.some((r) => r.period_type === k));
+  let filter = prefs('reportFilter', 'all');
+  if (filter !== 'all' && !types.includes(filter)) filter = 'all';
+
+  $('#report-filter').innerHTML = types.length > 1
+    ? [['all', 'All'], ...types.map((k) => [k, REPORT_BADGE[k]])]
+      .map(([k, l]) => `<button type="button" data-filter="${k}" class="${k === filter ? 'on' : ''}">${l}</button>`).join('')
+    : '';
+
   const host = $('#reports');
   if (!reports.length) {
-    host.innerHTML = '<p class="empty">No reports yet. They appear here once a week, month or quarter with trips has ended.</p>';
+    host.innerHTML = '<p class="empty small-empty">No reports yet. They appear here automatically after each week, month, quarter and financial year with trips.</p>';
     return;
   }
-  host.innerHTML = reports.map((r) => `
-    <div class="card report">
-      <div>
-        <span class="badge">${esc(REPORT_BADGE[r.period_type] || r.period_type)}</span>
-        <div><strong>${esc(r.label)}</strong></div>
-        <div class="muted">${r.summary.trips} trip${r.summary.trips === 1 ? '' : 's'} · ${num(r.summary.total)} ${unit()}</div>
-        <div class="muted">Business ${r.summary.businessPercent}% (ABN ${r.summary.abnPercent}% · TFN ${r.summary.tfnPercent}%) · Personal ${r.summary.personalPercent}%</div>
-        ${r.logbook ? `<div class="muted"><strong>ATO business-use: ${r.logbook.businessUsePercent}%</strong>${r.logbook.inProgress ? ` · in progress, day ${r.logbook.daysElapsed} of 84` : ''}</div>` : ''}
-        <div class="muted">Made ${esc(new Date(r.generated_at).toLocaleString())}</div>
-      </div>
-      <div class="actions">
-        <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
-        <button class="btn small" type="button" data-file="csv" data-id="${r.id}">CSV</button>
-        <button class="btn small" type="button" data-regen="${r.id}" title="Rebuild with latest edits" aria-label="Rebuild report">↻</button>
-      </div>
-    </div>`).join('');
+  const shown = reports.filter((r) => filter === 'all' || r.period_type === filter);
+  host.innerHTML = shown.map((r) => {
+    const s = r.summary;
+    return `
+      <div class="report-row">
+        <div class="report-main">
+          <div class="report-title"><strong>${esc(r.label)}</strong>${filter === 'all' ? `<span class="badge">${REPORT_BADGE[r.period_type]}</span>` : ''}</div>
+          <div class="muted">${num(s.total)} ${unit()} · Business ${s.businessPercent}% (ABN ${s.abnPercent}% · TFN ${s.tfnPercent}%) · Personal ${s.personalPercent}%</div>
+          ${r.logbook ? `<div class="muted"><strong>ATO business-use ${r.logbook.businessUsePercent}%</strong>${r.logbook.inProgress ? ` · day ${r.logbook.daysElapsed} of 84` : ''}</div>` : ''}
+        </div>
+        <div class="actions">
+          <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
+          <button class="btn small" type="button" data-file="csv" data-id="${r.id}">CSV</button>
+          <button class="btn small" type="button" data-regen="${r.id}" title="Rebuild with latest trips" aria-label="Rebuild report">↻</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+$('#report-filter').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  setPref('reportFilter', b.dataset.filter);
+  renderReports();
+});
+
+$('#create-type').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-create]');
+  if (!b) return;
+  setPref('createType', b.dataset.create);
+  showCreatePanel();
+});
+
+function showCreatePanel() {
+  const type = prefs('createType', 'range');
+  $$('#create-type [data-create]').forEach((x) => x.classList.toggle('on', x.dataset.create === type));
+  $$('[data-panel]').forEach((f) => f.classList.toggle('hidden', f.dataset.panel !== type));
 }
 
 $('#reports').addEventListener('click', async (e) => {
@@ -652,6 +792,7 @@ $('#custom-report').addEventListener('submit', async (e) => {
   const from = fd.get('from');
   const to = fd.get('to');
   if (!from || !to || from > to) return toast('Choose a valid date range');
+  setPref('reportFilter', 'all');
   try {
     const report = await store.generateReport('custom', from, to);
     renderReports();
@@ -667,6 +808,8 @@ function renderReportForms() {
   const car = store.meta.car || {};
   const f = $('#car-form');
   for (const k of ['make', 'model', 'engine', 'rego']) f.elements[k].value = car[k] || '';
+  $('#car-summary').textContent = [car.make, car.model, car.rego].filter(Boolean).join(' · ') || 'not set';
+  showCreatePanel();
 
   const lb = $('#logbook-form');
   if (!lb.elements.start.value) lb.elements.start.value = localDate(new Date(), TIME_ZONE);
@@ -692,6 +835,8 @@ $('#car-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   await store.saveCar(Object.fromEntries(fd));
+  renderReportForms();
+  e.target.closest('details').open = false;
   toast('Car details saved — rebuild (↻) older reports to include them');
 });
 
@@ -701,6 +846,7 @@ $('#logbook-form').addEventListener('submit', async (e) => {
   if (!start) return toast('Choose the start date');
   try {
     const report = await store.generateLogbook(start);
+    setPref('reportFilter', 'all');
     renderReports();
     await deliver(await reportFile(report, 'xlsx'));
   } catch (err) {
@@ -714,6 +860,7 @@ $('#fy-form').addEventListener('submit', async (e) => {
   const y = Number(e.target.elements.fy.value);
   try {
     const report = await store.generateReport('financial_year', `${y}-07-01`, `${y + 1}-06-30`);
+    setPref('reportFilter', 'all');
     renderReports();
     await deliver(await reportFile(report, 'xlsx'));
   } catch (err) {
@@ -741,6 +888,7 @@ function renderBackupNag() {
 
 function renderBackupInfo() {
   const days = daysSinceBackup();
+  $('#backup-summary').textContent = days === null ? 'never' : days === 0 ? 'today' : `${days}d ago`;
   $('#backup-info').textContent = `${store.trips.length} trips on this phone. ${
     days === null ? 'No backup made yet.' : `Last backup ${days === 0 ? 'today' : `${days} day(s) ago`}.`}`;
 }
@@ -755,6 +903,7 @@ async function backup() {
   }
   renderBackupInfo();
   renderBackupNag();
+  return result;
 }
 
 document.addEventListener('click', (e) => {

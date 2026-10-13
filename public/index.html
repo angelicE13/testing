@@ -29,56 +29,67 @@
 
     <!-- History -->
     <section id="view-history" class="view hidden">
+      <div class="history-bar">
+        <span class="muted" id="history-count"></span>
+        <button class="link danger-link" type="button" id="clear-all">Clear all</button>
+      </div>
+      <p class="muted hint" id="swipe-hint">Swipe a trip left to delete it. Tap it to edit.</p>
       <div id="history"></div>
     </section>
 
     <!-- Reports -->
     <section id="view-reports" class="view hidden">
       <div class="card">
-        <h2>Automatic reports</h2>
-        <p class="muted">A new report appears here after each week (Mon–Sun), month, quarter
-          (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec) and financial year ends — at midnight if the app is open, otherwise
-          the next time you open it. Time zone: <span id="tz"></span>.</p>
-        <p class="muted">Tap <strong>Excel</strong> or <strong>CSV</strong> to save the file to Files, email it or send it to Drive.</p>
+        <h2>Your reports</h2>
+        <div class="chips report-filter" id="report-filter"></div>
+        <div id="reports"></div>
       </div>
-      <form id="logbook-form" class="card">
-        <h2>ATO 12-week logbook</h2>
-        <p class="muted">For the ATO logbook method. Pick the day your 12 weeks start. You can create it at any
-          time to check progress; rebuild it (↻) when the 12 weeks are over. A logbook is valid for 5 years.</p>
-        <label>Start date<input type="date" name="start" required></label>
-        <p class="muted" id="logbook-end"></p>
-        <button class="btn primary" type="submit">Create logbook</button>
-      </form>
-      <form id="fy-form" class="card">
-        <h2>Financial year summary</h2>
-        <p class="muted">1 July – 30 June, with odometer readings and ABN / TFN totals. Created automatically after 30 June.</p>
-        <label>Financial year<select name="fy"></select></label>
-        <button class="btn primary" type="submit">Create summary</button>
-      </form>
-      <form id="custom-report" class="card">
-        <h2>Export a date range</h2>
-        <div class="row">
-          <label>From<input type="date" name="from" required></label>
-          <label>To<input type="date" name="to" required></label>
-        </div>
-        <button class="btn primary" type="submit">Create report</button>
-      </form>
-      <div id="reports"></div>
-      <form id="car-form" class="card">
-        <h2>Car details</h2>
-        <p class="muted">Printed on every report — the ATO needs these for a logbook.</p>
-        <div class="row">
-          <label>Make<input name="make" placeholder="e.g. Toyota" autocomplete="off"></label>
-          <label>Model<input name="model" placeholder="e.g. RAV4" autocomplete="off"></label>
-        </div>
-        <div class="row">
-          <label>Engine capacity<input name="engine" placeholder="e.g. 2.5L" autocomplete="off"></label>
-          <label>Registration<input name="rego" placeholder="e.g. ABC123" autocomplete="off"></label>
-        </div>
-        <button class="btn primary" type="submit">Save car details</button>
-      </form>
+
       <div class="card">
-        <h2>Backup</h2>
+        <h2>Create a report</h2>
+        <div class="seg create-type" id="create-type">
+          <button type="button" data-create="range" class="on">Date range</button>
+          <button type="button" data-create="logbook">Logbook</button>
+          <button type="button" data-create="fy">Fin. year</button>
+        </div>
+        <form id="custom-report" data-panel="range">
+          <div class="row">
+            <label>From<input type="date" name="from" required></label>
+            <label>To<input type="date" name="to" required></label>
+          </div>
+          <button class="btn primary big" type="submit">Create report</button>
+        </form>
+        <form id="logbook-form" data-panel="logbook" class="hidden">
+          <label>12 weeks starting on<input type="date" name="start" required></label>
+          <p class="muted" id="logbook-end"></p>
+          <button class="btn primary big" type="submit">Create logbook</button>
+          <p class="muted small">For the ATO logbook method. Create it any time to check progress, then rebuild it (↻)
+            when the 12 weeks are over. A logbook is valid for 5 years.</p>
+        </form>
+        <form id="fy-form" data-panel="fy" class="hidden">
+          <label>Financial year<select name="fy"></select></label>
+          <button class="btn primary big" type="submit">Create summary</button>
+        </form>
+      </div>
+
+      <details class="card fold">
+        <summary>Car details <span class="muted" id="car-summary"></span></summary>
+        <form id="car-form">
+          <p class="muted">Printed on every report — the ATO needs these for a logbook.</p>
+          <div class="row">
+            <label>Make<input name="make" placeholder="e.g. Toyota" autocomplete="off"></label>
+            <label>Model<input name="model" placeholder="e.g. RAV4" autocomplete="off"></label>
+          </div>
+          <div class="row">
+            <label>Engine capacity<input name="engine" placeholder="e.g. 2.5L" autocomplete="off"></label>
+            <label>Registration<input name="rego" placeholder="e.g. ABC123" autocomplete="off"></label>
+          </div>
+          <button class="btn primary" type="submit">Save car details</button>
+        </form>
+      </details>
+
+      <details class="card fold">
+        <summary>Backup &amp; restore <span class="muted" id="backup-summary"></span></summary>
         <p class="muted">Your trips are stored only on this phone. Save a backup now and then (to Files, iCloud
           Drive, Google Drive or email) so you don't lose them if the phone is lost or replaced.</p>
         <p class="muted" id="backup-info"></p>
@@ -86,7 +97,16 @@
           <button class="btn primary" type="button" data-backup>Save backup</button>
           <label class="btn file-btn">Restore backup<input type="file" id="restore" accept="application/json,.json"></label>
         </div>
-      </div>
+      </details>
+
+      <details class="card fold">
+        <summary>How automatic reports work</summary>
+        <p class="muted">A report is made after each week (Mon–Sun), month, quarter (Jan–Mar, Apr–Jun, Jul–Sep,
+          Oct–Dec) and financial year (Jul–Jun) that has trips — at midnight if the app is open, otherwise the next
+          time you open it. Time zone: <span id="tz"></span>.</p>
+        <p class="muted">Tap <strong>Excel</strong> or <strong>CSV</strong> to save a report to Files, email it or send
+          it to Drive. Tap ↻ to rebuild a report after editing trips.</p>
+      </details>
       <p class="muted version" id="version"></p>
     </section>
   </main>
@@ -105,7 +125,17 @@
     <div id="edit-form"></div>
   </dialog>
 
-  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="clear-dialog" class="center-dialog">
+    <h2>Clear all trips?</h2>
+    <p>This deletes <strong id="clear-count"></strong> and all reports from this phone. It cannot be undone.</p>
+    <div class="stack">
+      <button class="btn primary big" type="button" data-clear="backup">Save a backup, then clear</button>
+      <button class="btn danger big" type="button" data-clear="now">Clear without backup</button>
+      <button class="btn big" type="button" data-clear="cancel">Cancel</button>
+    </div>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"><span id="toast-text"></span><button class="link" type="button" id="toast-action"></button></div>
   <datalist id="clients"></datalist>
   <script src="vendor/exceljs.min.js" defer></script>
   <script src="app.js" type="module"></script>
