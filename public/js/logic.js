@@ -3,6 +3,31 @@
 import { addDays, lastCompletedPeriod, localDate, localTime, periodContaining, periodLabel } from './periods.js';
 
 export const UNIT = 'km';
+/** Business clients, most recently used first. */
+export function recentClients(trips, limit = 8) {
+  const seen = new Set();
+  const out = [];
+  for (const t of [...trips].sort(byStartDesc)) {
+    if (t.category !== 'business') continue;
+    for (const name of [t.to_client, t.purpose, t.from_client]) {
+      const key = name?.toLowerCase();
+      if (name && !seen.has(key)) {
+        seen.add(key);
+        out.push(name);
+      }
+    }
+  }
+  return out.slice(0, limit);
+}
+
+/** The client you are leaving, if the last trip today ended at a client (for "between clients"). */
+export function comingFromClient(trips, startOdo, startAt, timeZone) {
+  const last = [...trips].sort(byStartDesc).find((t) => t.end_odo !== null);
+  if (!last || last.category !== 'business' || last.end_odo !== startOdo) return '';
+  if (localDate(last.end_at, timeZone) !== localDate(startAt, timeZone)) return '';
+  return last.between_clients ? last.to_client : last.purpose;
+}
+
 export const PERIOD_TYPES = ['weekly', 'monthly', 'quarterly'];
 
 export const CATEGORIES = {
@@ -66,11 +91,13 @@ export function normaliseTrip(input) {
   const betweenClients = isBusiness && Boolean(input.between_clients);
   const fromClient = betweenClients ? text(input.from_client) : '';
   const toClient = betweenClients ? text(input.to_client) : '';
-  if (isBusiness && !purpose && !betweenClients) {
-    throw new ValidationError('Business trips need a purpose or client name');
+  // A trip can start before the client is chosen; it's required to finish.
+  const finished = endOdo !== null;
+  if (finished && isBusiness && !purpose && !betweenClients) {
+    throw new ValidationError('Choose the client or purpose for this business trip');
   }
-  if (betweenClients && (!fromClient || !toClient)) {
-    throw new ValidationError('Enter both the "from" and "to" client for travel between clients');
+  if (betweenClients && (!fromClient || (finished && !toClient))) {
+    throw new ValidationError('Choose which client you are going to');
   }
 
   return {

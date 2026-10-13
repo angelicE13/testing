@@ -17,14 +17,16 @@ home screen. After the first visit it works with no signal.
 
 ## Features
 
-- **Start trip / End trip**, or log a finished trip all at once.
-- **Start odometer** is filled in from the last trip's end reading. Switch it
-  off to type the reading yourself. You get a warning about gaps or overlaps.
-- **Auto-compute:** enter the end odometer or the distance, and the other is
-  worked out.
-- **Personal:** personal travel, travel to home, travel to work.
-  **Business:** TFN or ABN, client/purpose, and travel between clients
-  (from → to). Client names you've used before are suggested.
+- **Start a trip with one tap:** Business ABN, Business TFN, Personal, To work or To home.
+  The time and start odometer are filled in for you (tap *Change* if the
+  odometer is different).
+- **Finish with one number:** type the end odometer, or switch to *Trip
+  distance* and type the km. Then tap *Finish trip*. The app remembers which
+  one you prefer.
+- **Clients:** for business trips, tap a recent client or type a new one. You
+  can do this any time before finishing. If you leave one client and drive
+  straight to the next, it's marked as *between clients* automatically.
+- **+ Add a past trip** is the full form, for trips you forgot to log.
 - **History:** tap a trip to edit or delete it.
 - **Reports:**
   - weekly (Mon–Sun)

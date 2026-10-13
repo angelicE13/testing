@@ -3,7 +3,7 @@
 import { Store, memoryAdapter } from './js/store.js';
 import { idbAdapter } from './js/idb.js';
 import { periodContaining, localDate } from './js/periods.js';
-import { summarise, tripsInRange, byStartDesc, UNIT } from './js/logic.js';
+import { summarise, tripsInRange, byStartDesc, recentClients, comingFromClient, UNIT } from './js/logic.js';
 import { deliver, reportFile } from './js/files.js';
 
 const TYPES = {
@@ -289,7 +289,19 @@ function tripForm(host, { mode, trip = null, onSaved, onModeChange }) {
   paint();
 }
 
-// ---------- Log view ----------
+// ---------- Log view (quick, made for the car) ----------
+// Start: one tap on where you're going. Finish: type one number, tap Finish.
+const QUICK = [
+  { key: 'abn', label: 'Business', sub: 'ABN', category: 'business' },
+  { key: 'tfn', label: 'Business', sub: 'TFN', category: 'business' },
+  { key: 'personal_travel', label: 'Personal', sub: '', category: 'personal' },
+  { key: 'work', label: 'To work', sub: '', category: 'personal' },
+  { key: 'home', label: 'To home', sub: '', category: 'personal' },
+];
+const QUICK_LABEL = {
+  abn: 'Business · ABN', tfn: 'Business · TFN', personal_travel: 'Personal', work: 'To work', home: 'To home',
+};
+
 function renderStats() {
   const s = state.summary;
   if (!s) return;
@@ -299,78 +311,202 @@ function renderStats() {
   $('#stats').innerHTML = tile('This week', s.weekly) + tile('This month', s.monthly) + tile('Quarter', s.quarterly);
 }
 
+function renderStart() {
+  const host = $('#new-trip');
+  const odo = state.lastEndOdo;
+  const editing = odo === null || state.editOdo;
+  host.innerHTML = `
+    <div class="quick">
+      <div class="odo-line">
+        ${editing ? `
+          <label class="odo-edit">Odometer now
+            <input type="number" inputmode="decimal" step="0.1" min="0" id="start-odo" value="${odo ?? ''}" placeholder="e.g. 45210">
+          </label>`
+        : `<span>Odometer <strong>${num(odo)}</strong></span>
+           <button class="link" type="button" id="change-odo">Change</button>`}
+      </div>
+      <h2 class="quick-title">Tap to start a trip</h2>
+      <div class="tiles">
+        ${QUICK.map((q) => `
+          <button class="tile ${q.category}" type="button" data-start="${q.key}">
+            ${q.label}${q.sub ? `<small>${q.sub}</small>` : ''}
+          </button>`).join('')}
+      </div>
+      <p class="error" id="start-error"></p>
+      <button class="link past" type="button" id="add-past">+ Add a past trip</button>
+    </div>`;
+
+  $('#change-odo')?.addEventListener('click', () => {
+    state.editOdo = true;
+    renderStart();
+    $('#start-odo').select();
+  });
+  $('#add-past').addEventListener('click', openPast);
+  host.querySelector('.tiles').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-start]');
+    if (!b) return;
+    const q = QUICK.find((x) => x.key === b.dataset.start);
+    const typed = $('#start-odo')?.value;
+    const startOdo = editing ? typed : odo;
+    if (startOdo === '' || startOdo === undefined) {
+      $('#start-error').textContent = 'Enter the odometer first';
+      $('#start-odo').focus();
+      return;
+    }
+    const startAt = new Date().toISOString();
+    const from = q.category === 'business' ? comingFromClient(store.trips, Number(startOdo), startAt, TIME_ZONE) : '';
+    try {
+      await store.createTrip({
+        category: q.category,
+        trip_type: q.key,
+        start_at: startAt,
+        start_odo: startOdo,
+        start_odo_manual: editing && odo !== null && Number(startOdo) !== odo,
+        between_clients: Boolean(from),
+        from_client: from,
+      });
+      state.editOdo = false;
+      toast('Trip started — drive safe');
+      await refresh();
+    } catch (err) {
+      $('#start-error').textContent = err.message;
+    }
+  });
+}
+
 function renderActive() {
   const host = $('#active-trip');
   const t = state.active;
   if (!t) { host.innerHTML = ''; return; }
-  const autoCompute = prefs('autoCompute', true);
-  const what = t.between_clients ? `${t.from_client} → ${t.to_client}` : t.purpose || TYPE_LABEL[t.trip_type];
+  const business = t.category === 'business';
+  const client = t.between_clients ? t.to_client : t.purpose;
+  const byDistance = prefs('endByDistance', false);
+  const clients = recentClients(store.trips).filter((c) => c !== t.from_client);
+
   host.innerHTML = `
-    <form class="card active" novalidate>
-      <h2><span class="pulse"></span>Trip in progress</h2>
-      <p><strong>${esc(TYPE_LABEL[t.trip_type])}</strong>${what !== TYPE_LABEL[t.trip_type] ? ` — ${esc(what)}` : ''}</p>
-      <p class="muted">Started ${esc(dayLabel(t.start_at))}, ${esc(time(t.start_at))} · odometer ${num(t.start_odo)}</p>
-      <div class="row">
-        <label>End odometer<input type="number" name="end_odo" inputmode="decimal" step="0.1" min="0"></label>
-        ${autoCompute ? `<label>or distance (${unit()})<input type="number" name="distance" inputmode="decimal" step="0.1" min="0"></label>` : ''}
+    <div class="quick active-trip">
+      <div class="trip-head">
+        <span class="pulse"></span>
+        <div>
+          <div class="trip-type">${esc(QUICK_LABEL[t.trip_type])}</div>
+          <div class="muted">Started ${esc(time(t.start_at))} · odometer ${num(t.start_odo)}</div>
+        </div>
       </div>
-      <label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>
-      <div class="total"><span>Total</span><strong class="total-value">–</strong></div>
-      <p class="error"></p>
-      <button class="btn primary big" type="submit">End trip</button>
-      <div class="row" style="margin-top:8px">
-        <button class="btn edit" type="button">Edit details</button>
-        <button class="btn danger cancel" type="button">Discard trip</button>
+
+      ${business ? `
+        <div class="client-box">
+          ${t.between_clients ? `
+            <div class="from-row">From <strong>${esc(t.from_client)}</strong>
+              <button class="link" type="button" id="not-from">not from a client</button></div>` : ''}
+          <div class="label">${t.between_clients ? 'To which client?' : 'Which client?'}</div>
+          <div class="chips big">
+            ${clients.map((c) => `<button type="button" data-client="${esc(c)}" class="${c === client ? 'on' : ''}">${esc(c)}</button>`).join('')}
+          </div>
+          <input id="client-input" list="clients" autocomplete="off" placeholder="${clients.length ? 'Or type a new client' : 'Type the client name'}"
+            value="${client && !clients.includes(client) ? esc(client) : ''}">
+        </div>` : ''}
+
+      <div class="end-box">
+        <div class="seg end-mode">
+          <button type="button" data-mode="odo" class="${byDistance ? '' : 'on'}">End odometer</button>
+          <button type="button" data-mode="dist" class="${byDistance ? 'on' : ''}">Trip distance</button>
+        </div>
+        <input class="big-number" id="end-value" type="number" inputmode="decimal" step="0.1" min="0"
+          placeholder="${byDistance ? `${unit()} driven` : `more than ${num(t.start_odo)}`}">
+        <div class="total-line" id="end-total"></div>
       </div>
-    </form>`;
-  const form = $('form', host);
-  const endInput = form.elements.end_odo;
-  const distInput = form.elements.distance;
-  const show = () => {
-    const end = parseFloat(endInput.value);
-    const total = Number.isFinite(end) ? round1(end - t.start_odo) : null;
-    const el = $('.total-value', form);
-    el.textContent = total === null ? '–' : `${num(total)} ${unit()}`;
-    el.style.color = total !== null && total < 0 ? 'var(--danger)' : '';
+      <p class="error" id="end-error"></p>
+      <button class="btn primary huge" type="button" id="finish">Finish trip</button>
+      <div class="small-actions">
+        <button class="link" type="button" id="edit-active">Edit</button>
+        <button class="link danger-link" type="button" id="cancel-active">Cancel trip</button>
+      </div>
+    </div>`;
+
+  const input = $('#end-value');
+  const totalEl = $('#end-total');
+  const values = () => {
+    const v = parseFloat(input.value);
+    if (!Number.isFinite(v)) return null;
+    return byDistance ? { end: round1(t.start_odo + v), dist: round1(v) } : { end: round1(v), dist: round1(v - t.start_odo) };
   };
-  endInput.addEventListener('input', () => {
-    if (distInput) distInput.value = endInput.value === '' ? '' : round1(parseFloat(endInput.value) - t.start_odo);
-    show();
+  input.addEventListener('input', () => {
+    $('#end-error').textContent = '';
+    const v = values();
+    totalEl.textContent = v ? (byDistance ? `Ends at ${num(v.end)}` : `${num(v.dist)} ${unit()}`) : '';
+    totalEl.classList.toggle('bad', Boolean(v && v.dist < 0));
   });
-  distInput?.addEventListener('input', () => {
-    endInput.value = distInput.value === '' ? '' : round1(t.start_odo + parseFloat(distInput.value));
-    show();
+
+  const setClient = async (name) => {
+    const n = name.trim();
+    if (!n) return;
+    const change = t.between_clients ? { to_client: n } : { purpose: n };
+    await store.updateTrip(t.id, change);
+    state.active = store.activeTrip();
+  };
+
+  host.querySelector('.chips')?.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-client]');
+    if (!b) return;
+    $$('.chips [data-client]', host).forEach((x) => x.classList.toggle('on', x === b));
+    $('#client-input').value = '';
+    await setClient(b.dataset.client);
   });
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  $('#client-input')?.addEventListener('change', async (e) => {
+    $$('.chips [data-client]', host).forEach((x) => x.classList.remove('on'));
+    await setClient(e.target.value);
+  });
+  $('#not-from')?.addEventListener('click', async () => {
+    await store.updateTrip(t.id, { between_clients: false, from_client: '', to_client: '', purpose: client || '' });
+    await refresh();
+  });
+  host.querySelector('.end-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (!b) return;
+    setPref('endByDistance', b.dataset.mode === 'dist');
+    renderActive();
+    $('#end-value').focus();
+  });
+
+  $('#finish').addEventListener('click', async () => {
+    const err = $('#end-error');
+    err.textContent = '';
+    const typed = $('#client-input')?.value;
+    if (typed) await setClient(typed);
+    const v = values();
+    if (!v) { err.textContent = byDistance ? 'Enter the distance' : 'Enter the end odometer'; input.focus(); return; }
     try {
-      await store.endTrip(t.id, { end_odo: endInput.value, end_at: fromLocalInput(form.elements.end_at.value) });
-      toast('Trip ended');
+      await store.endTrip(t.id, { end_odo: v.end, end_at: new Date().toISOString() });
+      toast(`Logged ${num(v.dist)} ${unit()}`);
       await refresh();
-    } catch (err) {
-      $('.error', form).textContent = err.message;
+    } catch (e) {
+      err.textContent = e.message;
     }
   });
-  $('.edit', form).addEventListener('click', () => openEdit(t));
-  $('.cancel', form).addEventListener('click', async () => {
-    if (!confirm('Discard this trip?')) return;
+  $('#edit-active').addEventListener('click', () => openEdit(store.activeTrip()));
+  $('#cancel-active').addEventListener('click', async () => {
+    if (!confirm('Cancel this trip? Nothing will be logged.')) return;
     await store.deleteTrip(t.id);
-    toast('Trip discarded');
     await refresh();
   });
 }
 
 function renderLog() {
   renderStats();
-  renderActive();
   renderBackupNag();
-  const host = $('#new-trip');
-  if (state.active) { host.innerHTML = ''; return; }
-  tripForm(host, {
-    mode: prefs('newTripMode', 'start'),
-    onSaved: refresh,
-    onModeChange: (m) => { setPref('newTripMode', m); renderLog(); },
+  renderActive();
+  if (state.active) $('#new-trip').innerHTML = '';
+  else renderStart();
+}
+
+function openPast() {
+  const dialog = $('#edit-dialog');
+  $('#edit-dialog h2').textContent = 'Add a past trip';
+  tripForm($('#edit-form'), {
+    mode: 'complete',
+    onSaved: async () => { dialog.close(); await refresh(); },
   });
+  dialog.showModal();
 }
 
 // ---------- History view ----------
@@ -411,6 +547,7 @@ $('#history').addEventListener('click', (e) => {
 
 function openEdit(trip) {
   const dialog = $('#edit-dialog');
+  $('#edit-dialog h2').textContent = 'Edit trip';
   tripForm($('#edit-form'), {
     mode: 'edit',
     trip,

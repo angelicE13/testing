@@ -31,8 +31,8 @@ test('trips: distance computed, auto start odo and validation', async () => {
   assert.match(warnings[0], /4\.5 km not logged/);
 
   await assert.rejects(store.createTrip(trip({ end_odo: 900 })), ValidationError);
-  await assert.rejects(store.createTrip(trip({ purpose: '' })), /purpose or client/);
-  await assert.rejects(store.createTrip(trip({ between_clients: true, from_client: 'A' })), /from.*to/);
+  await assert.rejects(store.createTrip(trip({ purpose: '' })), /client or purpose/);
+  await assert.rejects(store.createTrip(trip({ between_clients: true, from_client: 'A' })), /which client/);
   await assert.rejects(store.createTrip(trip({ category: 'personal', trip_type: 'abn' })), /type of trip/);
 });
 

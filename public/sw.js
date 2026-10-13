@@ -1,7 +1,7 @@
 // Makes the app work with no signal: every file is stored on the phone.
 // Opens from the cache instantly and fetches updates in the background
 // (the new version shows the next time the app is opened).
-const CACHE = 'mileage-v2';
+const CACHE = 'mileage-v3';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'js/periods.js', 'js/logic.js', 'js/store.js', 'js/idb.js', 'js/files.js',

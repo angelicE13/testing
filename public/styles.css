@@ -165,3 +165,39 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .file-btn input { display: none; }
 #backup-nag .warn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin: 0 0 12px; }
 #backup-nag .link { color: inherit; font-weight: 700; text-decoration: underline; padding: 0; }
+
+/* ---- quick log (home screen) ---- */
+.quick { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.odo-line { display: flex; justify-content: space-between; align-items: center; font-size: 1.1rem; }
+.odo-line strong { font-size: 1.3rem; }
+.odo-edit { width: 100%; margin: 0; }
+.odo-edit input { font-size: 1.4rem; }
+.quick-title { margin: 18px 0 10px; font-size: 1rem; color: var(--muted); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile {
+  font: inherit; font-size: 1.2rem; font-weight: 700; color: #fff; border: none; border-radius: 16px;
+  min-height: 92px; padding: 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.tile small { font-size: .95rem; font-weight: 600; opacity: .9; }
+.tile.business { background: var(--business); }
+.tile.personal { background: var(--personal); }
+.tile:active { transform: scale(.97); }
+.tiles .tile:last-child:nth-child(odd) { grid-column: span 2; min-height: 72px; }
+.past { display: block; margin: 16px auto 0; font-size: 1rem; }
+
+.active-trip { border: 2px solid var(--primary); }
+.trip-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.trip-type { font-size: 1.35rem; font-weight: 700; }
+.client-box { margin-bottom: 16px; }
+.client-box .label { font-weight: 600; margin-bottom: 8px; }
+.from-row { margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.chips.big button { font-size: 1.05rem; min-height: 48px; padding: 10px 16px; }
+.end-box .seg { margin-bottom: 8px; }
+.big-number { font-size: 2rem; font-weight: 700; text-align: center; min-height: 72px; }
+.total-line { text-align: center; font-size: 1.3rem; font-weight: 700; min-height: 1.6em; margin-top: 8px; }
+.total-line.bad { color: var(--danger); }
+.btn.huge { width: 100%; min-height: 68px; font-size: 1.3rem; border-radius: 16px; }
+.small-actions { display: flex; justify-content: space-between; margin-top: 12px; }
+.danger-link { color: var(--danger); }
+.big-number::-webkit-outer-spin-button, .big-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.big-number { -moz-appearance: textfield; appearance: textfield; }
