@@ -1,0 +1,552 @@
+// Mileage Logbook — phone-first client. No build step; plain ES modules.
+
+const TYPES = {
+  personal: [
+    ['personal_travel', 'Personal travel'],
+    ['home', 'Travel to home'],
+    ['work', 'Travel to work'],
+  ],
+  business: [
+    ['tfn', 'TFN'],
+    ['abn', 'ABN'],
+  ],
+};
+const TYPE_LABEL = {
+  personal_travel: 'Personal travel', home: 'Travel to home', work: 'Travel to work',
+  tfn: 'Business · TFN', abn: 'Business · ABN',
+};
+
+const state = { config: { unit: 'km' }, lastEndOdo: null, active: null, trips: [], view: 'log' };
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// ---------- helpers ----------
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const num = (n) => (n === null || n === undefined || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 }));
+const round1 = (n) => Math.round(n * 10) / 10;
+const unit = () => state.config.unit;
+const pad = (n) => String(n).padStart(2, '0');
+
+function toLocalInput(value) {
+  const d = value ? new Date(value) : new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+const fromLocalInput = (s) => (s ? new Date(s).toISOString() : null);
+const time = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+const dayLabel = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const dayKey = (iso) => toLocalInput(iso).slice(0, 10);
+
+function prefs(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : JSON.parse(v);
+  } catch {
+    return fallback;
+  }
+}
+function setPref(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin',
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== '/api/login') {
+    showLogin();
+    throw new Error('Please sign in');
+  }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// ---------- data ----------
+async function refresh() {
+  const [active, last, trips, summary] = await Promise.all([
+    api('/api/trips/active'),
+    api('/api/odometer/last'),
+    api('/api/trips?limit=300'),
+    api('/api/summary'),
+  ]);
+  state.active = active;
+  state.lastEndOdo = last.lastEndOdo;
+  state.trips = trips;
+  state.summary = summary;
+  renderClients();
+  renderLog();
+  if (state.view === 'history') renderHistory();
+}
+
+function renderClients() {
+  const names = new Set();
+  for (const t of state.trips) {
+    if (t.category !== 'business') continue;
+    [t.purpose, t.from_client, t.to_client].forEach((n) => n && names.add(n));
+  }
+  $('#clients').innerHTML = [...names].sort().map((n) => `<option value="${esc(n)}">`).join('');
+}
+
+// ---------- trip form ----------
+/**
+ * Renders the trip form into `host`.
+ * mode: 'start' (trip begins now), 'complete' (log a finished trip), 'edit' (existing trip).
+ */
+function tripForm(host, { mode, trip = null, onSaved, onModeChange }) {
+  const isNew = mode !== 'edit';
+  const hasEnd = mode === 'complete' || (mode === 'edit' && trip.end_odo !== null);
+  const lastEnd = isNew ? state.lastEndOdo : null;
+  const f = {
+    category: trip?.category || prefs('lastCategory', 'business'),
+    tripType: trip?.trip_type || null,
+    between: Boolean(trip?.between_clients),
+    startAuto: isNew && lastEnd !== null && prefs('startAuto', true),
+    autoCompute: prefs('autoCompute', true),
+  };
+  if (!TYPES[f.category].some(([v]) => v === f.tripType)) f.tripType = TYPES[f.category][0][0];
+
+  host.innerHTML = `
+    <form class="card" novalidate>
+      ${isNew ? `
+        <div class="seg mode">
+          <button type="button" data-value="start" class="${mode === 'start' ? 'on' : ''}">Start trip now</button>
+          <button type="button" data-value="complete" class="${mode === 'complete' ? 'on' : ''}">Log finished trip</button>
+        </div>` : ''}
+
+      <div class="seg category">
+        <button type="button" data-value="personal">Personal</button>
+        <button type="button" data-value="business">Business</button>
+      </div>
+      <div class="chips types"></div>
+
+      <div class="business-only">
+        <label><span class="purpose-label">Client / purpose</span>
+          <input name="purpose" list="clients" autocomplete="off" placeholder="e.g. Smith & Co – site visit" value="${esc(trip?.purpose)}">
+        </label>
+        <label class="switch">Travel between clients <input type="checkbox" name="between" ${f.between ? 'checked' : ''}></label>
+        <div class="between-fields row">
+          <label>From client<input name="from_client" list="clients" autocomplete="off" value="${esc(trip?.from_client)}"></label>
+          <label>To client<input name="to_client" list="clients" autocomplete="off" value="${esc(trip?.to_client)}"></label>
+        </div>
+      </div>
+      <div class="personal-only">
+        <label>Purpose (optional)<input name="personal_purpose" autocomplete="off" value="${esc(trip?.category === 'personal' ? trip.purpose : '')}"></label>
+      </div>
+
+      <div class="row dt">
+        <label>Start date &amp; time<input type="datetime-local" name="start_at" value="${toLocalInput(trip?.start_at)}" required></label>
+        <label><span class="odo-label">Start odometer</span>
+          <input type="number" name="start_odo" inputmode="decimal" step="0.1" min="0" value="${trip ? trip.start_odo : lastEnd ?? ''}" required>
+        </label>
+      </div>
+      ${isNew && lastEnd !== null ? `
+        <label class="switch">Use last end odometer (${num(lastEnd)})
+          <input type="checkbox" name="start_auto" ${f.startAuto ? 'checked' : ''}>
+        </label>` : ''}
+      <div class="odo-warning"></div>
+
+      ${hasEnd || mode === 'edit' ? `
+        <div class="end-fields">
+          <div class="row dt">
+            <label>End date &amp; time<input type="datetime-local" name="end_at" value="${trip?.end_at || mode === 'complete' ? toLocalInput(trip?.end_at) : ''}"></label>
+            <label>End odometer<input type="number" name="end_odo" inputmode="decimal" step="0.1" min="0" value="${trip?.end_odo ?? ''}" ${mode === 'complete' ? 'required' : ''}></label>
+          </div>
+          <label class="switch">Auto-compute (enter distance or end odometer)
+            <input type="checkbox" name="auto_compute" ${f.autoCompute ? 'checked' : ''}>
+          </label>
+          <label class="distance-field">Total distance (${unit()})
+            <input type="number" name="distance" inputmode="decimal" step="0.1" min="0" value="${trip?.distance ?? ''}">
+          </label>
+          <div class="total"><span>Total</span><strong class="total-value">–</strong></div>
+        </div>` : ''}
+
+      <label>Notes (optional)<textarea name="notes" rows="2">${esc(trip?.notes)}</textarea></label>
+      <p class="error"></p>
+      <button class="btn primary big" type="submit">${{ start: 'Start trip', complete: 'Save trip', edit: 'Save changes' }[mode]}</button>
+      ${mode === 'edit' ? '<button class="btn danger big delete" type="button" style="margin-top:8px">Delete trip</button>' : ''}
+    </form>`;
+
+  const form = $('form', host);
+  const el = (name) => form.elements[name];
+  const errorEl = $('.error', form);
+
+  function paint() {
+    $$('.seg.category button', form).forEach((b) => b.classList.toggle('on', b.dataset.value === f.category));
+    $('.types', form).innerHTML = TYPES[f.category]
+      .map(([v, l]) => `<button type="button" data-value="${v}" class="${v === f.tripType ? 'on' : ''}">${l}</button>`)
+      .join('');
+    const business = f.category === 'business';
+    $('.business-only', form).classList.toggle('hidden', !business);
+    $('.personal-only', form).classList.toggle('hidden', business);
+    $('.between-fields', form).classList.toggle('hidden', !f.between);
+    $('.purpose-label', form).textContent = f.between ? 'Purpose (optional)' : 'Client / purpose';
+    el('start_odo').readOnly = f.startAuto;
+    if (f.startAuto) el('start_odo').value = lastEnd;
+    const dist = $('.distance-field', form);
+    if (dist) dist.classList.toggle('hidden', !f.autoCompute);
+    compute();
+  }
+
+  function compute(source) {
+    const start = parseFloat(el('start_odo').value);
+    const warn = $('.odo-warning', form);
+    const ref = isNew ? lastEnd : null;
+    warn.innerHTML = '';
+    if (ref !== null && Number.isFinite(start) && start !== ref) {
+      warn.innerHTML = start < ref
+        ? `<div class="warn">Start is ${num(ref - start)} ${unit()} below where the last trip ended (${num(ref)}).</div>`
+        : `<div class="warn">${num(start - ref)} ${unit()} not logged since the last trip ended at ${num(ref)}.</div>`;
+    }
+    if (!el('end_odo')) return;
+    const endInput = el('end_odo');
+    const distInput = el('distance');
+    if (f.autoCompute && source === 'distance' && Number.isFinite(start) && distInput.value !== '') {
+      endInput.value = round1(start + parseFloat(distInput.value));
+    }
+    const end = parseFloat(endInput.value);
+    const total = Number.isFinite(start) && Number.isFinite(end) ? round1(end - start) : null;
+    if (f.autoCompute && source !== 'distance') distInput.value = total ?? '';
+    const totalEl = $('.total-value', form);
+    totalEl.textContent = total === null ? '–' : `${num(total)} ${unit()}`;
+    totalEl.style.color = total !== null && total < 0 ? 'var(--danger)' : '';
+  }
+
+  form.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-value]');
+    if (!b) return;
+    if (b.closest('.mode')) return onModeChange?.(b.dataset.value);
+    if (b.closest('.category')) {
+      f.category = b.dataset.value;
+      f.tripType = TYPES[f.category][0][0];
+      if (f.category === 'personal') { f.between = false; el('between').checked = false; }
+    }
+    if (b.closest('.types')) f.tripType = b.dataset.value;
+    paint();
+  });
+  form.addEventListener('input', (e) => {
+    const n = e.target.name;
+    if (n === 'between') f.between = e.target.checked;
+    if (n === 'start_auto') { f.startAuto = e.target.checked; setPref('startAuto', f.startAuto); }
+    if (n === 'auto_compute') { f.autoCompute = e.target.checked; setPref('autoCompute', f.autoCompute); }
+    if (['between', 'start_auto', 'auto_compute'].includes(n)) return paint();
+    if (n === 'distance') return compute('distance');
+    if (n === 'start_odo' || n === 'end_odo') compute(n);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.textContent = '';
+    const business = f.category === 'business';
+    const body = {
+      category: f.category,
+      trip_type: f.tripType,
+      purpose: business ? el('purpose').value : el('personal_purpose').value,
+      between_clients: business && f.between,
+      from_client: el('from_client').value,
+      to_client: el('to_client').value,
+      notes: el('notes').value,
+      start_at: fromLocalInput(el('start_at').value),
+      start_odo: el('start_odo').value,
+      start_odo_manual: isNew ? !f.startAuto : Boolean(trip.start_odo_manual),
+    };
+    if (el('end_odo')) {
+      body.end_odo = el('end_odo').value === '' ? null : el('end_odo').value;
+      body.end_at = body.end_odo === null ? null : fromLocalInput(el('end_at').value) || new Date().toISOString();
+    }
+    const btn = $('button[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const result = mode === 'edit'
+        ? await api(`/api/trips/${trip.id}`, { method: 'PUT', body })
+        : await api('/api/trips', { method: 'POST', body });
+      setPref('lastCategory', f.category);
+      toast(result.warnings?.length ? result.warnings[0] : { start: 'Trip started', complete: 'Trip saved', edit: 'Changes saved' }[mode]);
+      await onSaved?.(result.trip);
+    } catch (err) {
+      errorEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('.delete', form)?.addEventListener('click', async () => {
+    if (!confirm('Delete this trip? This cannot be undone.')) return;
+    try {
+      await api(`/api/trips/${trip.id}`, { method: 'DELETE' });
+      toast('Trip deleted');
+      await onSaved?.(null);
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+
+  paint();
+}
+
+// ---------- Log view ----------
+function renderStats() {
+  const s = state.summary;
+  if (!s) return;
+  const tile = (k, d) => `
+    <div class="stat"><div class="k">${k}</div><div class="v">${num(d.total)}</div>
+    <div class="s">${unit()} · ${d.businessPercent}% business</div></div>`;
+  $('#stats').innerHTML = tile('This week', s.weekly) + tile('This month', s.monthly) + tile('Quarter', s.quarterly);
+}
+
+function renderActive() {
+  const host = $('#active-trip');
+  const t = state.active;
+  if (!t) { host.innerHTML = ''; return; }
+  const autoCompute = prefs('autoCompute', true);
+  const what = t.between_clients ? `${t.from_client} → ${t.to_client}` : t.purpose || TYPE_LABEL[t.trip_type];
+  host.innerHTML = `
+    <form class="card active" novalidate>
+      <h2><span class="pulse"></span>Trip in progress</h2>
+      <p><strong>${esc(TYPE_LABEL[t.trip_type])}</strong>${what !== TYPE_LABEL[t.trip_type] ? ` — ${esc(what)}` : ''}</p>
+      <p class="muted">Started ${esc(dayLabel(t.start_at))}, ${esc(time(t.start_at))} · odometer ${num(t.start_odo)}</p>
+      <div class="row">
+        <label>End odometer<input type="number" name="end_odo" inputmode="decimal" step="0.1" min="0"></label>
+        ${autoCompute
+          ? `<label>or distance (${unit()})<input type="number" name="distance" inputmode="decimal" step="0.1" min="0"></label>`
+          : `<label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>`}
+      </div>
+      ${autoCompute ? `<label>End time<input type="datetime-local" name="end_at" value="${toLocalInput()}"></label>` : ''}
+      <div class="total"><span>Total</span><strong class="total-value">–</strong></div>
+      <p class="error"></p>
+      <button class="btn primary big" type="submit">End trip</button>
+      <div class="row" style="margin-top:8px">
+        <button class="btn edit" type="button">Edit details</button>
+        <button class="btn danger cancel" type="button">Discard trip</button>
+      </div>
+    </form>`;
+  const form = $('form', host);
+  const endInput = form.elements.end_odo;
+  const distInput = form.elements.distance;
+  const show = () => {
+    const end = parseFloat(endInput.value);
+    const total = Number.isFinite(end) ? round1(end - t.start_odo) : null;
+    $('.total-value', form).textContent = total === null ? '–' : `${num(total)} ${unit()}`;
+  };
+  endInput.addEventListener('input', () => {
+    if (distInput) distInput.value = endInput.value === '' ? '' : round1(parseFloat(endInput.value) - t.start_odo);
+    show();
+  });
+  distInput?.addEventListener('input', () => {
+    endInput.value = distInput.value === '' ? '' : round1(t.start_odo + parseFloat(distInput.value));
+    show();
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      if (endInput.value === '') throw new Error('Enter the end odometer or distance');
+      await api(`/api/trips/${t.id}/end`, {
+        method: 'POST',
+        body: { end_odo: endInput.value, end_at: fromLocalInput(form.elements.end_at.value) },
+      });
+      toast('Trip ended');
+      await refresh();
+    } catch (err) {
+      $('.error', form).textContent = err.message;
+    }
+  });
+  $('.edit', form).addEventListener('click', () => openEdit(t));
+  $('.cancel', form).addEventListener('click', async () => {
+    if (!confirm('Discard this trip?')) return;
+    await api(`/api/trips/${t.id}`, { method: 'DELETE' });
+    toast('Trip discarded');
+    await refresh();
+  });
+}
+
+function renderLog() {
+  renderStats();
+  renderActive();
+  const host = $('#new-trip');
+  if (state.active) { host.innerHTML = ''; return; }
+  const mode = prefs('newTripMode', 'start');
+  tripForm(host, {
+    mode,
+    onSaved: refresh,
+    onModeChange: (m) => { setPref('newTripMode', m); renderLog(); },
+  });
+}
+
+// ---------- History view ----------
+function renderHistory() {
+  const host = $('#history');
+  if (!state.trips.length) {
+    host.innerHTML = '<p class="empty">No trips yet. Log your first one from the Log tab.</p>';
+    return;
+  }
+  const groups = new Map();
+  for (const t of state.trips) {
+    const k = dayKey(t.start_at);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  host.innerHTML = [...groups.values()].map((list) => {
+    const total = round1(list.reduce((a, t) => a + (t.distance || 0), 0));
+    return `
+      <div class="day"><span>${esc(dayLabel(list[0].start_at))}</span><span>${num(total)} ${unit()}</span></div>
+      ${list.map((t) => {
+        const what = t.between_clients ? `${t.from_client} → ${t.to_client}` : t.purpose || TYPE_LABEL[t.trip_type];
+        const end = t.end_odo === null ? 'in progress' : `${num(t.start_odo)} → ${num(t.end_odo)}`;
+        return `
+          <button class="trip ${t.category}" type="button" data-id="${t.id}">
+            <span class="what">${esc(what)}</span>
+            <span class="km">${t.distance === null ? '…' : `${num(t.distance)} ${unit()}`}</span>
+            <span class="meta">${esc(TYPE_LABEL[t.trip_type])} · ${esc(time(t.start_at))}${t.end_at ? `–${esc(time(t.end_at))}` : ''}</span>
+            <span class="meta">${end}</span>
+          </button>`;
+      }).join('')}`;
+  }).join('');
+}
+
+$('#history').addEventListener('click', (e) => {
+  const b = e.target.closest('.trip');
+  if (b) openEdit(state.trips.find((t) => t.id === Number(b.dataset.id)));
+});
+
+function openEdit(trip) {
+  const dialog = $('#edit-dialog');
+  tripForm($('#edit-form'), {
+    mode: 'edit',
+    trip,
+    onSaved: async () => { dialog.close(); await refresh(); },
+  });
+  dialog.showModal();
+}
+$('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog').close());
+
+// ---------- Reports view ----------
+async function renderReports() {
+  const reports = await api('/api/reports');
+  const host = $('#reports');
+  if (!reports.length) {
+    host.innerHTML = '<p class="empty">No reports yet. They appear here automatically once a week, month or quarter ends.</p>';
+    return;
+  }
+  host.innerHTML = reports.map((r) => `
+    <div class="card report">
+      <div>
+        <span class="badge">${esc(r.period_type)}</span>
+        <div><strong>${esc(r.label)}</strong></div>
+        <div class="muted">${r.trip_count} trips · ${num(r.total_distance)} ${unit()} · made ${esc(new Date(r.generated_at).toLocaleString())}</div>
+      </div>
+      <div class="actions">
+        <a class="btn small" href="/api/reports/${r.id}/download?format=xlsx" download>Excel</a>
+        <a class="btn small" href="/api/reports/${r.id}/download?format=csv" download>CSV</a>
+        <button class="btn small regen" type="button" data-id="${r.id}" title="Rebuild with latest edits" aria-label="Rebuild report">↻</button>
+      </div>
+    </div>`).join('');
+}
+
+$('#reports').addEventListener('click', async (e) => {
+  const b = e.target.closest('.regen');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    await api(`/api/reports/${b.dataset.id}/regenerate`, { method: 'POST' });
+    toast('Report rebuilt');
+    await renderReports();
+  } catch (err) {
+    toast(err.message);
+    b.disabled = false;
+  }
+});
+
+$('#run-due').addEventListener('click', async () => {
+  try {
+    const created = await api('/api/reports/run', { method: 'POST' });
+    toast(created.length ? `Created ${created.length} report(s)` : 'All reports are up to date');
+    await renderReports();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('#custom-report').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api('/api/reports/custom', { method: 'POST', body: { from: fd.get('from'), to: fd.get('to') } });
+    toast('Report created');
+    await renderReports();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+// ---------- navigation & auth ----------
+const TITLES = { log: 'Log trip', history: 'History', reports: 'Reports', login: 'Mileage Logbook' };
+
+function show(view) {
+  state.view = view;
+  $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${view}`));
+  $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('#tabs').classList.toggle('hidden', view === 'login');
+  $('#title').textContent = TITLES[view];
+  if (view === 'history') renderHistory();
+  if (view === 'reports') renderReports().catch((err) => toast(err.message));
+  if (view === 'log') refresh().catch((err) => toast(err.message));
+  window.scrollTo(0, 0);
+}
+
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-view]');
+  if (b) show(b.dataset.view);
+});
+
+function showLogin() {
+  show('login');
+  $('#logout').classList.add('hidden');
+}
+
+$('#login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/login', { method: 'POST', body: { password: e.target.password.value } });
+    e.target.reset();
+    $('#login-error').textContent = '';
+    $('#logout').classList.toggle('hidden', !state.config.authRequired);
+    show('log');
+  } catch (err) {
+    $('#login-error').textContent = err.message;
+  }
+});
+
+$('#logout').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  showLogin();
+});
+
+async function init() {
+  state.config = await api('/api/config');
+  $('#tz').textContent = state.config.timezone;
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  $('#custom-report [name=from]').value = toLocalInput(first).slice(0, 10);
+  $('#custom-report [name=to]').value = toLocalInput(now).slice(0, 10);
+  if (state.config.authRequired && !state.config.authenticated) return showLogin();
+  $('#logout').classList.toggle('hidden', !state.config.authRequired);
+  return show('log');
+}
+
+init().catch((err) => toast(err.message));
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
