@@ -31,18 +31,15 @@ home screen. After the first visit it works with no signal.
   personal %, and ABN vs TFN % of business.
 
 ### Expenses
-- Amount, category, ABN/TFN/Personal, supplier (recent suppliers suggested),
-  optional odometer and a **receipt photo**. Photos are shrunk to about
-  150–350 KB and stay readable.
-- Categories:
-  - **Car:** petrol, service, repairs, parts, tyres, car wash, registration,
-    insurance
-  - **Tolls & parking**
-  - **Clothing / uniform** and **laundry**
-- **Estimated claimable** amounts for ABN and TFN:
-  - car costs × business-use % from the ATO logbook, split ABN/TFN by
-    business km
-  - plus tolls, clothing and laundry tagged ABN/TFN
+- Amount, category, supplier (recent suppliers suggested), optional odometer
+  and a **receipt photo**. Photos are shrunk to about 150–350 KB and stay
+  readable.
+- Categories: petrol, service, repairs, parts, tyres, car wash, registration,
+  insurance, tolls & parking, clothing/uniform, laundry, plus **Other…** for
+  anything else. Names you type are remembered as quick buttons.
+- **Estimated claimable:** every expense × your business-use % (from the ATO
+  logbook, or your trips until you have one), split between ABN and TFN by
+  business km.
 
 ### History
 - Separate **Mileage** and **Expenses** histories, each with search and filters.

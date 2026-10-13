@@ -50,6 +50,7 @@
               <button type="button" data-group="car">Car</button>
               <button type="button" data-group="travel">Tolls</button>
               <button type="button" data-group="clothing">Clothing</button>
+              <button type="button" data-group="other">Other</button>
             </div>
             <select id="expense-month" aria-label="Month"></select>
           </div>
@@ -196,15 +197,8 @@
         <input class="big-number" name="amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" aria-label="Amount">
       </div>
       <div class="cat-grid" id="cat-grid"></div>
-      <div id="for-row" class="hidden">
-        <div class="label">This is for</div>
-        <div class="seg" id="applies-seg">
-          <button type="button" data-for="abn">ABN</button>
-          <button type="button" data-for="tfn">TFN</button>
-          <button type="button" data-for="personal">Personal</button>
-        </div>
-      </div>
-      <p class="muted small hidden" id="car-note">Car costs are shared: your business-use % (from the ATO logbook) is claimed, split ABN/TFN by business km.</p>
+      <label id="other-row" class="hidden">What is it for?<input name="other_label" maxlength="40" placeholder="e.g. Phone holder" autocomplete="off"></label>
+      <p class="muted small">Claimed by your business-use % from your mileage, split ABN/TFN by business km.</p>
       <div class="photo-box">
         <img id="photo-preview" class="hidden" alt="Receipt photo — tap to enlarge">
         <div class="photo-actions">
@@ -212,7 +206,7 @@
           <button class="link danger-link hidden" type="button" id="photo-remove">Remove photo</button>
         </div>
       </div>
-      <div class="row">
+      <div class="row dt">
         <label>Date<input type="date" name="date"></label>
         <label>Supplier<input name="supplier" autocomplete="off" placeholder="e.g. BP"></label>
       </div>

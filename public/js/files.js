@@ -32,8 +32,8 @@ async function xlsxBlob(report) {
     h.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     h.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E79' } };
     for (const r of report.expenses.rows) x.addRow(EXPENSE_COLUMNS.map(([k]) => r[k]));
-    [12, 18, 20, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
-    x.getColumn(5).numFmt = '$#,##0.00';
+    [12, 20, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
+    x.getColumn(4).numFmt = '$#,##0.00';
     s.addRow([]);
     s.addRow(['Expenses']).font = { bold: true, size: 12 };
     for (const line of expenseSummaryLines(report.expenses.summary)) s.addRow(line);

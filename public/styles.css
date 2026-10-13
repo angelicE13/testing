@@ -343,3 +343,6 @@ select { appearance: auto; }
 .history-switch { margin-bottom: 8px; }
 .breakdown .bar-legend { font-size: .85rem; gap: 2px 12px; }
 .breakdown .bar-legend .dot { margin-right: 4px; }
+.cat-grid .cat-other.on { background: var(--primary); color: var(--primary-text); }
+.cat-grid .cat-new { border-style: dashed; }
+.row > label > input { min-width: 0; }

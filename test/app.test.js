@@ -154,30 +154,28 @@ test('financial year report is due after 30 June', async () => {
 // ---------- expenses ----------
 import { summariseExpenses, normaliseExpense, receiptName } from '../public/js/expenses.js';
 
-test('expenses: validation', () => {
+test('expenses: validation and custom "Other" categories', () => {
   assert.throws(() => normaliseExpense({ amount: 0, category: 'fuel', date: '2026-10-01' }), /amount/);
   assert.throws(() => normaliseExpense({ amount: 10, category: 'nope', date: '2026-10-01' }), /category/);
-  assert.throws(() => normaliseExpense({ amount: 10, category: 'laundry', date: '2026-10-01' }), /ABN, TFN or Personal/);
-  const car = normaliseExpense({ amount: '45.206', category: 'fuel', date: '2026-10-01', applies_to: 'tfn' });
-  assert.equal(car.amount, 45.21);
-  assert.equal(car.applies_to, 'car', 'car costs are shared by business-use %');
+  assert.throws(() => normaliseExpense({ amount: 10, category: 'other', date: '2026-10-01' }), /what the expense is for/);
+  const e = normaliseExpense({ amount: '45.206', category: 'other', category_label: ' Phone holder ', date: '2026-10-01' });
+  assert.equal(e.amount, 45.21);
+  assert.equal(e.category_label, 'Phone holder');
+  assert.equal(normaliseExpense({ amount: 5, category: 'fuel', category_label: 'x', date: '2026-10-01' }).category_label, '');
 });
 
-test('expenses: claimable = car costs × business-use %, split ABN/TFN by km, plus tagged items', () => {
+test('expenses: every expense × business-use %, split ABN/TFN by business km', () => {
   const list = [
-    { amount: 100, category: 'fuel', applies_to: 'car' },
-    { amount: 300, category: 'service', applies_to: 'car' },
-    { amount: 12, category: 'tolls_parking', applies_to: 'abn' },
-    { amount: 8, category: 'tolls_parking', applies_to: 'personal' },
-    { amount: 50, category: 'clothing', applies_to: 'tfn' },
+    { amount: 100, category: 'fuel' },
+    { amount: 300, category: 'service' },
+    { amount: 50, category: 'clothing' },
+    { amount: 50, category: 'other', category_label: 'Phone holder' },
   ];
   const s = summariseExpenses(list, { businessUse: 60, abnShare: 75 });
-  assert.equal(s.total, 470);
-  assert.equal(s.carTotal, 400);
-  assert.equal(s.carClaimable, 240);
-  assert.equal(s.parts.carAbn, 180);
-  assert.equal(s.parts.carTfn, 60);
-  assert.deepEqual(s.claimable, { abn: 192, tfn: 110 });
+  assert.equal(s.total, 500);
+  assert.equal(s.claimableTotal, 300);
+  assert.deepEqual(s.claimable, { abn: 225, tfn: 75 });
+  assert.equal(s.byCategory['Phone holder'], 50);
 });
 
 test('expenses in reports use the ATO logbook business-use %', async () => {

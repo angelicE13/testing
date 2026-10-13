@@ -1,12 +1,11 @@
 // Expense logic: categories, validation and the claimable estimate. No browser APIs.
+//
+// Every expense is shared by how the car is used: the claimable part is the business-use %
+// (from the ATO logbook, or the trips while there is no logbook yet), and that part is split
+// between ABN and TFN by business km.
 import { ValidationError, round1 } from './logic.js';
 
-/**
- * group decides how the claim is worked out:
- *  car      – running costs; claimable = business-use % from the ATO logbook, split ABN/TFN by km
- *  travel   – tolls & parking for a work trip; claimable in full for the ABN/TFN chosen
- *  clothing – uniform/protective clothing & its laundry; claimable for ABN/TFN if eligible
- */
+// group only sets the colour and the History filter.
 export const EXPENSE_CATEGORIES = [
   { key: 'fuel', label: 'Petrol', group: 'car' },
   { key: 'service', label: 'Service', group: 'car', odometer: true },
@@ -19,29 +18,31 @@ export const EXPENSE_CATEGORIES = [
   { key: 'tolls_parking', label: 'Tolls & parking', group: 'travel' },
   { key: 'clothing', label: 'Clothing / uniform', group: 'clothing' },
   { key: 'laundry', label: 'Laundry', group: 'clothing' },
+  { key: 'other', label: 'Other', group: 'other' }, // the name is typed in (category_label)
 ];
 export const CATEGORY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
-export const APPLIES_TO = { abn: 'ABN', tfn: 'TFN', personal: 'Personal' };
+
+/** Display name of an expense's category ("Other" expenses carry their own name). */
+export const categoryLabel = (e) => (e.category === 'other' && e.category_label ? e.category_label : CATEGORY[e.category]?.label || e.category);
 
 const round2 = (n) => Math.round(n * 100) / 100;
-const text = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
+const text = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
 export function normaliseExpense(input) {
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new ValidationError('Enter the amount');
   const cat = CATEGORY[input.category];
   if (!cat) throw new ValidationError('Choose a category');
+  const label = cat.key === 'other' ? text(input.category_label, 40) : '';
+  if (cat.key === 'other' && !label) throw new ValidationError('Type what the expense is for');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || '')) throw new ValidationError('Choose the date');
-  // Car running costs are shared by business-use %, so they aren't tagged to one income.
-  const appliesTo = cat.group === 'car' ? 'car' : input.applies_to;
-  if (cat.group !== 'car' && !APPLIES_TO[appliesTo]) throw new ValidationError('Choose ABN, TFN or Personal');
   const odo = input.odometer === '' || input.odometer === null || input.odometer === undefined ? null : Number(input.odometer);
   if (odo !== null && (!Number.isFinite(odo) || odo < 0)) throw new ValidationError('Odometer must be a positive number');
   return {
     date: input.date,
     amount: round2(amount),
     category: cat.key,
-    applies_to: appliesTo,
+    category_label: label,
     supplier: text(input.supplier),
     notes: text(input.notes),
     odometer: odo === null ? null : round1(odo),
@@ -54,47 +55,33 @@ export function expensesInRange(expenses, start, end) {
 }
 
 /**
- * Totals and the claimable estimate for a set of expenses.
- * businessUse: % of car use that is business (ATO logbook); abnShare: % of business km that is ABN.
+ * Totals and the claimable estimate.
+ * businessUse: % of car use that is business; abnShare: % of business km that is ABN.
  */
 export function summariseExpenses(expenses, { businessUse = 0, abnShare = 0 } = {}) {
-  const sum = (list) => round2(list.reduce((a, e) => a + e.amount, 0));
-  const byCategory = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, sum(expenses.filter((e) => e.category === c.key))]));
-  const car = expenses.filter((e) => CATEGORY[e.category].group === 'car');
-  const other = expenses.filter((e) => CATEGORY[e.category].group !== 'car');
-  const carTotal = sum(car);
-  const carClaimable = round2((carTotal * businessUse) / 100);
-  const carAbn = round2((carClaimable * abnShare) / 100);
-  const carTfn = round2(carClaimable - carAbn);
-  const otherFor = (who, group) => sum(other.filter((e) => e.applies_to === who && (!group || CATEGORY[e.category].group === group)));
+  const total = round2(expenses.reduce((a, e) => a + e.amount, 0));
+  const byCategory = {};
+  for (const e of expenses) {
+    const k = categoryLabel(e);
+    byCategory[k] = round2((byCategory[k] || 0) + e.amount);
+  }
+  const claimableTotal = round2((total * businessUse) / 100);
+  const abn = round2((claimableTotal * abnShare) / 100);
   return {
     count: expenses.length,
-    total: sum(expenses),
+    total,
     byCategory,
-    carTotal,
     businessUse,
     abnShare,
-    carClaimable,
-    claimable: {
-      abn: round2(carAbn + otherFor('abn')),
-      tfn: round2(carTfn + otherFor('tfn')),
-    },
-    parts: {
-      carAbn,
-      carTfn,
-      tollsAbn: otherFor('abn', 'travel'),
-      tollsTfn: otherFor('tfn', 'travel'),
-      clothingAbn: otherFor('abn', 'clothing'),
-      clothingTfn: otherFor('tfn', 'clothing'),
-    },
+    claimableTotal,
+    claimable: { abn, tfn: round2(claimableTotal - abn) },
   };
 }
 
 export function expenseRows(expenses) {
   return expenses.map((e) => ({
     date: e.date,
-    category: CATEGORY[e.category].label,
-    applies_to: e.applies_to === 'car' ? 'Car (business-use %)' : APPLIES_TO[e.applies_to],
+    category: categoryLabel(e),
     supplier: e.supplier,
     amount: e.amount,
     odometer: e.odometer ?? '',
@@ -104,44 +91,49 @@ export function expenseRows(expenses) {
 }
 
 export const EXPENSE_COLUMNS = [
-  ['date', 'Date'], ['category', 'Category'], ['applies_to', 'For'], ['supplier', 'Supplier'],
-  ['amount', 'Amount ($)'], ['odometer', 'Odometer'], ['receipt', 'Receipt photo'], ['notes', 'Notes'],
+  ['date', 'Date'], ['category', 'Category'], ['supplier', 'Supplier'], ['amount', 'Amount ($)'],
+  ['odometer', 'Odometer'], ['receipt', 'Receipt photo'], ['notes', 'Notes'],
 ];
 
 const money = (n) => `$${n.toFixed(2)}`;
 
 export function expenseSummaryLines(s) {
   const lines = [['Total spent', money(s.total)]];
-  for (const c of EXPENSE_CATEGORIES) if (s.byCategory[c.key]) lines.push([`  ${c.label}`, money(s.byCategory[c.key])]);
+  for (const [label, amount] of Object.entries(s.byCategory)) lines.push([`  ${label}`, money(amount)]);
   lines.push(
-    ['Car running costs', money(s.carTotal)],
     ['Business-use % applied', `${s.businessUse}%${s.businessUseSource ? ` (${s.businessUseSource})` : ''}`],
-    ['Car costs claimable', money(s.carClaimable)],
-    ['  ABN share (by business km)', `${money(s.parts.carAbn)} (${s.abnShare}%)`],
-    ['  TFN share (by business km)', `${money(s.parts.carTfn)} (${round1(100 - s.abnShare)}%)`],
-    ['Tolls & parking — ABN / TFN', `${money(s.parts.tollsAbn)} / ${money(s.parts.tollsTfn)}`],
-    ['Clothing & laundry — ABN / TFN (if eligible)', `${money(s.parts.clothingAbn)} / ${money(s.parts.clothingTfn)}`],
-    ['Estimated claimable — ABN', money(s.claimable.abn)],
-    ['Estimated claimable — TFN', money(s.claimable.tfn)],
+    ['Estimated claimable', money(s.claimableTotal)],
+    ['  ABN (by business km)', `${money(s.claimable.abn)} (${s.abnShare}%)`],
+    ['  TFN (by business km)', `${money(s.claimable.tfn)} (${round1(100 - s.abnShare)}%)`],
   );
   return lines;
 }
 
 const safe = (s) => String(s || '').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
-/** File name for a receipt photo, e.g. 2026-10-14_Petrol_BP_45.20.jpg */
+/** File name for a receipt photo, e.g. 2026-10-14_Petrol_BP_45.20_12.jpg */
 export function receiptName(e) {
-  return [e.date, safe(CATEGORY[e.category].label), safe(e.supplier), e.amount.toFixed(2)].filter(Boolean).join('_') + `_${e.id}.jpg`;
+  return [e.date, safe(categoryLabel(e)), safe(e.supplier), e.amount.toFixed(2)].filter(Boolean).join('_') + `_${e.id}.jpg`;
 }
 
-/** Suppliers used before, most recent first. */
+/** Suppliers used before (for the category, if given), most recent first. */
 export function recentSuppliers(expenses, category = null, limit = 6) {
+  return recent(expenses.filter((e) => !category || e.category === category), (e) => e.supplier, limit);
+}
+
+/** Names typed for "Other" expenses, most recent first — shown as quick buttons. */
+export function customCategories(expenses, limit = 6) {
+  return recent(expenses.filter((e) => e.category === 'other'), (e) => e.category_label, limit);
+}
+
+function recent(list, pick, limit) {
   const seen = new Set();
   const out = [];
-  for (const e of [...expenses].sort((a, b) => (a.date < b.date ? 1 : -1))) {
-    if (!e.supplier || (category && e.category !== category)) continue;
-    const k = e.supplier.toLowerCase();
-    if (!seen.has(k)) { seen.add(k); out.push(e.supplier); }
+  for (const e of [...list].sort((a, b) => (a.date < b.date ? 1 : -1))) {
+    const v = pick(e);
+    if (!v || seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
   }
   return out.slice(0, limit);
 }

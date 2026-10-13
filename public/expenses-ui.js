@@ -1,6 +1,6 @@
 // Expenses tab: quick entry with a receipt photo, list by month, edit/delete.
 import {
-  APPLIES_TO, CATEGORY, EXPENSE_CATEGORIES, expensesInRange, recentSuppliers, summariseExpenses,
+  CATEGORY, EXPENSE_CATEGORIES, categoryLabel, customCategories, expensesInRange, recentSuppliers, summariseExpenses,
 } from './js/expenses.js';
 import { localDate, periodContaining } from './js/periods.js';
 import { summarise, tripsInRange } from './js/logic.js';
@@ -16,7 +16,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
   let editing = null; // expense being edited, or null for a new one
   let photo = { id: null, pending: null, url: null }; // pending = newly taken photo not yet saved
   let category = null;
-  let appliesTo = null;
+  let otherLabel = '';
 
   // ---------- lists ----------
   const filter = { q: '', group: 'all', month: 'all' };
@@ -26,10 +26,9 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
         <div class="swipe" data-id="${e.id}">
           <button class="swipe-left-action" type="button" tabindex="-1">Delete</button>
           <button class="expense swipe-card ${CATEGORY[e.category].group}" type="button">
-            <span class="what">${esc(CATEGORY[e.category].label)}${e.supplier ? ` · ${esc(e.supplier)}` : ''}</span>
+            <span class="what">${esc(categoryLabel(e))}${e.supplier ? ` · ${esc(e.supplier)}` : ''}</span>
             <span class="km">${money(e.amount)}</span>
-            <span class="meta">${esc(new Date(`${e.date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}
-              · ${e.applies_to === 'car' ? 'Car' : APPLIES_TO[e.applies_to]}</span>
+            <span class="meta">${esc(new Date(`${e.date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
             <span class="meta">${e.photo_id ? '📎 receipt' : '<span class="no-receipt">no receipt</span>'}</span>
           </button>
         </div>`).join('');
@@ -59,7 +58,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     const q = filter.q.trim().toLowerCase();
     const list = all.filter((e) => (filter.group === 'all' || CATEGORY[e.category].group === filter.group)
       && (filter.month === 'all' || e.date.startsWith(filter.month))
-      && (!q || [e.supplier, e.notes, CATEGORY[e.category].label].some((v) => v && v.toLowerCase().includes(q))));
+      && (!q || [e.supplier, e.notes, categoryLabel(e)].some((v) => v && v.toLowerCase().includes(q))));
     const total = list.reduce((a, e) => a + e.amount, 0);
     $('#expense-count').textContent = all.length
       ? `${list.length === all.length ? '' : `${list.length} of `}${all.length} expense${all.length === 1 ? '' : 's'} · ${money(total)}` : '';
@@ -101,9 +100,9 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
       <div class="big-total">${money(s.total)} <span>spent · ${s.count} item${s.count === 1 ? '' : 's'}</span></div>
       <div class="claim-row"><span>Est. claimable ABN</span><strong>${money(s.claimable.abn)}</strong></div>
       <div class="claim-row"><span>Est. claimable TFN</span><strong>${money(s.claimable.tfn)}</strong></div>
-      <p class="muted small">Car costs × ${businessUse}% business use
-        ${logbook ? '(ATO logbook)' : '(estimate — create an ATO logbook in Reports for the real figure)'}, split ABN/TFN by business km.
-        Clothing & laundry only if eligible — check with your accountant.</p>`;
+      <p class="muted small">All expenses × ${businessUse}% business use
+        ${logbook ? '(ATO logbook)' : '(from your trips — create an ATO logbook in Reports for the real figure)'},
+        split ABN ${abnShare}% / TFN ${Math.round((100 - abnShare) * 10) / 10}% by business km.</p>`;
   }
 
   $('#expense-summary').addEventListener('click', (e) => {
@@ -136,14 +135,16 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
 
   // ---------- entry dialog ----------
   function paint() {
-    const cat = CATEGORY[category];
-    $$('#cat-grid button').forEach((b) => b.classList.toggle('on', b.dataset.cat === category));
-    const isCar = cat?.group === 'car';
-    $('#for-row').classList.toggle('hidden', !cat || isCar);
-    $('#car-note').classList.toggle('hidden', !isCar);
-    $('#odo-row').classList.toggle('hidden', !cat?.odometer);
-    $$('#applies-seg button').forEach((b) => b.classList.toggle('on', b.dataset.for === appliesTo));
     const store = getStore();
+    const customs = customCategories(store.expenses);
+    $('#cat-grid').innerHTML = [
+      ...EXPENSE_CATEGORIES.filter((c) => c.key !== 'other').map((c) => `<button type="button" data-cat="${c.key}" class="cat-${c.group}${c.key === category ? ' on' : ''}">${c.label}</button>`),
+      ...customs.map((n) => `<button type="button" data-cat="other" data-label="${esc(n)}" class="cat-other${category === 'other' && otherLabel.toLowerCase() === n.toLowerCase() ? ' on' : ''}">${esc(n)}</button>`),
+      `<button type="button" data-cat="other" data-label="" class="cat-other cat-new${category === 'other' && !customs.some((n) => n.toLowerCase() === otherLabel.toLowerCase()) ? ' on' : ''}">Other…</button>`,
+    ].join('');
+    const isNewOther = category === 'other' && !customs.some((n) => n.toLowerCase() === otherLabel.toLowerCase());
+    $('#other-row').classList.toggle('hidden', !isNewOther);
+    $('#odo-row').classList.toggle('hidden', !CATEGORY[category]?.odometer);
     const suppliers = recentSuppliers(store.expenses, category);
     $('#supplier-chips').innerHTML = suppliers.map((n) => `<button type="button" data-supplier="${esc(n)}">${esc(n)}</button>`).join('');
   }
@@ -161,7 +162,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     const store = getStore();
     editing = exp;
     category = exp?.category || null;
-    appliesTo = exp && exp.applies_to !== 'car' ? exp.applies_to : prefs('lastAppliesTo', 'abn');
+    otherLabel = exp?.category === 'other' ? exp.category_label : '';
     photo = { id: exp?.photo_id || null, pending: null, url: null };
     form.reset();
     $('#expense-dialog h2').textContent = exp ? 'Edit expense' : 'Add expense';
@@ -170,6 +171,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     form.elements.supplier.value = exp?.supplier || '';
     form.elements.odometer.value = exp?.odometer ?? '';
     form.elements.notes.value = exp?.notes || '';
+    form.elements.other_label.value = otherLabel;
     $('#expense-error').textContent = '';
     $('#expense-delete').classList.toggle('hidden', !exp);
     showPhoto(null);
@@ -182,19 +184,18 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
     if (!exp) form.elements.amount.focus();
   }
 
-  $('#cat-grid').innerHTML = EXPENSE_CATEGORIES.map((c) => `<button type="button" data-cat="${c.key}" class="cat-${c.group}">${c.label}</button>`).join('');
   $('#cat-grid').addEventListener('click', (e) => {
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     category = b.dataset.cat;
+    if (category === 'other') {
+      otherLabel = b.dataset.label;
+      form.elements.other_label.value = otherLabel;
+    }
     paint();
+    if (category === 'other' && !otherLabel) form.elements.other_label.focus();
   });
-  $('#applies-seg').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-for]');
-    if (!b) return;
-    appliesTo = b.dataset.for;
-    paint();
-  });
+  form.elements.other_label.addEventListener('input', (e) => { otherLabel = e.target.value; });
   $('#supplier-chips').addEventListener('click', (e) => {
     const b = e.target.closest('[data-supplier]');
     if (b) form.elements.supplier.value = b.dataset.supplier;
@@ -235,7 +236,7 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
       const body = {
         amount: form.elements.amount.value,
         category,
-        applies_to: appliesTo,
+        category_label: category === 'other' ? form.elements.other_label.value : '',
         date: form.elements.date.value,
         supplier: form.elements.supplier.value,
         odometer: CATEGORY[category]?.odometer ? form.elements.odometer.value : null,
@@ -244,7 +245,6 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
       };
       if (editing) await store.updateExpense(editing.id, body);
       else await store.createExpense(body);
-      if (CATEGORY[category].group !== 'car') setPref('lastAppliesTo', appliesTo);
       dialog.close();
       toast(photoId ? 'Expense saved with receipt' : 'Expense saved — no receipt photo');
       render();
