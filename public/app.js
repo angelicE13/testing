@@ -30,7 +30,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.14-2';
+export const APP_VERSION = '2026.10.14-3';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -816,7 +816,7 @@ $('#edit-dialog [data-close]').addEventListener('click', () => $('#edit-dialog')
 const money = (n) => `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const REPORT_BADGE = {
-  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Fin. year', logbook: 'ATO logbook', custom: 'Custom',
+  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', financial_year: 'Fin. year', logbook: 'ATO logbook', custom: 'Custom', expenses: 'Expenses',
 };
 
 function renderReports() {
@@ -839,6 +839,23 @@ function renderReports() {
   host.innerHTML = shown.map((r) => {
     const s = r.summary;
     const receipts = countReceipts(store, r.period_start, r.period_end);
+    if (r.period_type === 'expenses') {
+      const x = r.expenses.summary;
+      return `
+      <div class="report-row">
+        <div class="report-main">
+          <div class="report-title"><strong>${esc(r.label)}</strong>${filter === 'all' ? `<span class="badge">${REPORT_BADGE.expenses}</span>` : ''}</div>
+          <div class="muted">${money(x.total)} · ${x.count} item${x.count === 1 ? '' : 's'} · ${x.categories.length} categor${x.categories.length === 1 ? 'y' : 'ies'}</div>
+          <div class="muted">Personal ${x.split.personal.pct}% · ABN ${x.split.abn.pct}% · TFN ${x.split.tfn.pct}%</div>
+        </div>
+        <div class="actions">
+          <button class="btn small" type="button" data-file="xlsx" data-id="${r.id}">Excel</button>
+          <button class="btn small" type="button" data-file="csv" data-id="${r.id}">CSV</button>
+          ${receipts ? `<button class="btn small" type="button" data-receipts="${r.id}">Receipts (${receipts})</button>` : ''}
+          <button class="btn small" type="button" data-regen="${r.id}" title="Rebuild with latest expenses" aria-label="Rebuild report">↻</button>
+        </div>
+      </div>`;
+    }
     return `
       <div class="report-row">
         <div class="report-main">
@@ -1013,6 +1030,21 @@ $('#fy-form').addEventListener('submit', async (e) => {
   const y = Number(e.target.elements.fy.value);
   try {
     const report = await store.generateReport('financial_year', `${y}-07-01`, `${y + 1}-06-30`);
+    setPref('reportFilter', 'all');
+    renderReports();
+    await deliver(await reportFile(report, 'xlsx'));
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('#expense-report-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const from = e.target.elements.from.value;
+  const to = e.target.elements.to.value;
+  if (!from || !to || from > to) { toast('Choose a valid date range'); return; }
+  try {
+    const report = await store.generateReport('expenses', from, to);
     setPref('reportFilter', 'all');
     renderReports();
     await deliver(await reportFile(report, 'xlsx'));
@@ -1222,6 +1254,8 @@ async function init() {
   const now = new Date();
   $('#custom-report [name=from]').value = toLocalInput(new Date(now.getFullYear(), now.getMonth(), 1)).slice(0, 10);
   $('#custom-report [name=to]').value = toLocalInput(now).slice(0, 10);
+  $('#expense-report-form [name=from]').value = $('#custom-report [name=from]').value;
+  $('#expense-report-form [name=to]').value = $('#custom-report [name=to]').value;
 
   show('log');
   await nightlySnapshot().catch(() => {});

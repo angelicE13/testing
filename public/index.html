@@ -91,12 +91,22 @@
 
       <div class="card">
         <h2>Create a report</h2>
-        <div class="seg create-type" id="create-type">
-          <button type="button" data-create="range" class="on">Date range</button>
-          <button type="button" data-create="logbook">Logbook</button>
+        <div class="chips create-type" id="create-type">
+          <button type="button" data-create="range" class="on">Mileage</button>
+          <button type="button" data-create="expenses">Expenses</button>
+          <button type="button" data-create="logbook">ATO logbook</button>
           <button type="button" data-create="fy">Fin. year</button>
           <button type="button" data-create="tax">Tax pack</button>
         </div>
+        <form id="expense-report-form" data-panel="expenses" class="hidden">
+          <p class="muted small">Expenses by category with totals and % of total, then the split of the total into
+            Personal / ABN / TFN based on your mileage.</p>
+          <div class="row dt">
+            <label>From<input type="date" name="from" required></label>
+            <label>To<input type="date" name="to" required></label>
+          </div>
+          <button class="btn primary big" type="submit">Create expense report</button>
+        </form>
         <form id="custom-report" data-panel="range">
           <div class="row">
             <label>From<input type="date" name="from" required></label>

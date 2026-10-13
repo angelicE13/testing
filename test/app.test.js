@@ -198,3 +198,20 @@ test('clients: rename merges names across trips', async () => {
   await store.renameClient('Acme', 'Acme Pty Ltd');
   assert.deepEqual(store.trips.map((t) => t.purpose || t.from_client), ['Acme Pty Ltd', 'Acme Pty Ltd']);
 });
+
+test('expense report: by category, % of total, and Personal/ABN/TFN split', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ trip_type: 'abn', start_odo: 0, end_odo: 30 }));
+  await store.createTrip(trip({ trip_type: 'tfn', start_odo: 30, end_odo: 40, start_at: '2026-10-07T00:00:00Z', end_at: null }));
+  await store.createTrip(trip({ category: 'personal', trip_type: 'home', purpose: '', start_odo: 40, end_odo: 100, start_at: '2026-10-07T02:00:00Z', end_at: null }));
+  await store.createExpense({ amount: 150, category: 'fuel', date: '2026-10-08' });
+  await store.createExpense({ amount: 50, category: 'other', category_label: 'Phone holder', date: '2026-10-09' });
+  const r = await store.generateReport('expenses', '2026-10-01', '2026-10-31');
+  const x = r.expenses.summary;
+  assert.equal(r.title, 'Expense report – 1 Oct 2026 – 31 Oct 2026');
+  assert.deepEqual(x.categories.map((c) => [c.label, c.amount, c.pct]), [['Petrol', 150, 75], ['Phone holder', 50, 25]]);
+  // 40% business (ABN 75% of that = 30%, TFN 10%), 60% personal
+  assert.deepEqual(x.split, {
+    personal: { pct: 60, amount: 120 }, abn: { pct: 30, amount: 60 }, tfn: { pct: 10, amount: 20 },
+  });
+});

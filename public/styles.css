@@ -346,3 +346,5 @@ select { appearance: auto; }
 .cat-grid .cat-other.on { background: var(--primary); color: var(--primary-text); }
 .cat-grid .cat-new { border-style: dashed; }
 .row > label > input { min-width: 0; }
+.create-type { margin: 4px 0 12px; }
+.create-type button { min-height: 38px; padding: 6px 14px; }

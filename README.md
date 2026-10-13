@@ -55,6 +55,11 @@ home screen. After the first visit it works with no signal.
   - business/personal and ABN/TFN percentages
   - an **Expenses** sheet with claimable estimates
   - a **Receipts** zip of that period's photos
+- **Expense report** for any date range:
+  - totals by category with % of total
+  - every expense
+  - at the end, the split of the total into **Personal / ABN / TFN** (% and $),
+    based on your mileage
 - **ATO 12-week logbook** with business-use %.
 - **Tax pack:** one zip per financial year with the workbook, the logbook, a
   summary and all receipt photos, ready for your accountant.

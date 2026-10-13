@@ -1,9 +1,57 @@
 // Turns a stored report into a CSV or Excel file and hands it to the phone
 // (share sheet: Save to Files, Mail, Drive…) or downloads it on a computer.
 import { COLUMNS, csvCell, fileBase, summaryLines, toCsv } from './logic.js';
-import { EXPENSE_COLUMNS, expensesCsvLines, expensesInRange, expenseSummaryLines, receiptName } from './expenses.js';
+import {
+  EXPENSE_COLUMNS, expenseReportCsvLines, expensesCsvLines, expensesInRange, expenseSummaryLines, receiptName,
+} from './expenses.js';
+
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E79' } };
+const styleHeader = (row) => { row.font = { bold: true, color: { argb: 'FFFFFFFF' } }; row.fill = HEADER_FILL; };
+
+/** Stand-alone expense report: by category, every expense, and the Personal/ABN/TFN split at the end. */
+async function expenseXlsxBlob(report) {
+  const wb = new window.ExcelJS.Workbook();
+  wb.creator = 'Mileage Logbook';
+  const s = report.expenses.summary;
+  const ws = wb.addWorksheet('Expense report');
+  ws.addRow([report.title]).font = { bold: true, size: 14 };
+  ws.addRow([`Period covered: ${report.period_start} to ${report.period_end}`]).font = { italic: true };
+  const car = report.car;
+  if (car) ws.addRow([`Car: ${[car.make, car.model].filter(Boolean).join(' ')} · Rego ${car.rego || '-'}`]);
+  ws.addRow([]);
+  ws.addRow(['By category']).font = { bold: true, size: 12 };
+  styleHeader(ws.addRow(['Category', 'Items', 'Amount', '% of total']));
+  for (const c of s.categories) ws.addRow([c.label, c.count, c.amount, c.pct / 100]);
+  const total = ws.addRow(['Total expenses', s.count, s.total, s.total ? 1 : 0]);
+  total.font = { bold: true };
+  ws.addRow([]);
+  ws.addRow(['Split of total expenses']).font = { bold: true, size: 12 };
+  styleHeader(ws.addRow(['', '', 'Amount', '% of total']));
+  ws.addRow(['Personal', '', s.split.personal.amount, s.split.personal.pct / 100]);
+  ws.addRow(['ABN', '', s.split.abn.amount, s.split.abn.pct / 100]);
+  ws.addRow(['TFN', '', s.split.tfn.amount, s.split.tfn.pct / 100]);
+  ws.addRow(['Total', '', s.total, s.total ? 1 : 0]).font = { bold: true };
+  ws.addRow([]);
+  ws.addRow([`Based on ${s.businessUse}% business use (${s.businessUseSource}); business part split ABN ${s.abnShare}% / TFN ${Math.round((100 - s.abnShare) * 10) / 10}% by business km.`]).font = { italic: true, color: { argb: 'FF5F6B7A' } };
+  ws.getColumn(1).width = 30;
+  ws.getColumn(2).width = 8;
+  ws.getColumn(3).width = 14;
+  ws.getColumn(4).width = 12;
+  ws.getColumn(3).numFmt = '$#,##0.00';
+  ws.getColumn(4).numFmt = '0.0%';
+
+  const x = wb.addWorksheet('All expenses', { views: [{ state: 'frozen', ySplit: 2 }] });
+  x.addRow([`${report.title} (period covered: ${report.period_start} to ${report.period_end})`]).font = { bold: true };
+  styleHeader(x.addRow(EXPENSE_COLUMNS.map(([, l]) => l)));
+  for (const r of report.expenses.rows) x.addRow(EXPENSE_COLUMNS.map(([k]) => r[k]));
+  [12, 20, 22, 12, 12, 44, 30].forEach((w, i) => { x.getColumn(i + 1).width = w; });
+  x.getColumn(4).numFmt = '$#,##0.00';
+  return new Blob([await wb.xlsx.writeBuffer()], { type: XLSX_TYPE });
+}
 
 async function xlsxBlob(report) {
+  if (report.period_type === 'expenses') return expenseXlsxBlob(report);
   const { ExcelJS } = window;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Mileage Logbook';
@@ -43,9 +91,12 @@ async function xlsxBlob(report) {
 }
 
 export async function reportFile(report, format) {
-  const name = `${fileBase(report)}.${format}`;
+  const name = `${report.period_type === 'expenses' ? `expense-report-${report.period_start}_to_${report.period_end}` : fileBase(report)}.${format}`;
+  const csvText = report.period_type === 'expenses'
+    ? `\uFEFF${expenseReportCsvLines(report, csvCell).join('\r\n')}\r\n`
+    : toCsv(report) + expensesCsvLines(report, csvCell).map((l) => `${l}\r\n`).join('');
   const blob = format === 'csv'
-    ? new Blob([toCsv(report) + expensesCsvLines(report, csvCell).map((l) => `${l}\r\n`).join('')], { type: 'text/csv' })
+    ? new Blob([csvText], { type: 'text/csv' })
     : await xlsxBlob(report);
   return new File([blob], name, { type: blob.type });
 }

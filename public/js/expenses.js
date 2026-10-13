@@ -67,14 +67,27 @@ export function summariseExpenses(expenses, { businessUse = 0, abnShare = 0 } = 
   }
   const claimableTotal = round2((total * businessUse) / 100);
   const abn = round2((claimableTotal * abnShare) / 100);
+  const tfn = round2(claimableTotal - abn);
+  const pctOfTotal = (amount) => (total ? round1((amount / total) * 100) : 0);
+  const categories = Object.entries(byCategory)
+    .map(([label, amount]) => ({ label, amount, count: expenses.filter((e) => categoryLabel(e) === label).length, pct: pctOfTotal(amount) }))
+    .sort((a, b) => b.amount - a.amount);
+  const abnPct = round1((businessUse * abnShare) / 100);
   return {
     count: expenses.length,
     total,
     byCategory,
+    categories,
     businessUse,
     abnShare,
     claimableTotal,
-    claimable: { abn, tfn: round2(claimableTotal - abn) },
+    claimable: { abn, tfn },
+    // How the total splits by car use: personal = 100 − business-use %; business split ABN/TFN by km.
+    split: {
+      personal: { pct: round1(100 - businessUse), amount: round2(total - claimableTotal) },
+      abn: { pct: abnPct, amount: abn },
+      tfn: { pct: round1(businessUse - abnPct), amount: tfn },
+    },
   };
 }
 
@@ -105,8 +118,19 @@ export function expenseSummaryLines(s) {
     ['Estimated claimable', money(s.claimableTotal)],
     ['  ABN (by business km)', `${money(s.claimable.abn)} (${s.abnShare}%)`],
     ['  TFN (by business km)', `${money(s.claimable.tfn)} (${round1(100 - s.abnShare)}%)`],
+    ...splitLines(s),
   );
   return lines;
+}
+
+/** End-of-report split of the total: Personal / ABN / TFN, as % and $. */
+export function splitLines(s) {
+  return [
+    ['Split of total expenses', money(s.total)],
+    ['  Personal', `${s.split.personal.pct}% · ${money(s.split.personal.amount)}`],
+    ['  ABN', `${s.split.abn.pct}% · ${money(s.split.abn.amount)}`],
+    ['  TFN', `${s.split.tfn.pct}% · ${money(s.split.tfn.amount)}`],
+  ];
 }
 
 const safe = (s) => String(s || '').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
@@ -171,5 +195,30 @@ export function expensesCsvLines(report, csvCell) {
   for (const r of report.expenses.rows) lines.push(EXPENSE_COLUMNS.map(([k]) => csvCell(r[k])).join(','));
   lines.push('', 'Expenses summary');
   for (const [k, v] of expenseSummaryLines(report.expenses.summary)) lines.push(`${csvCell(k)},${csvCell(v)}`);
+  return lines;
+}
+
+/** CSV for a stand-alone expense report: by category, every expense, then the split. */
+export function expenseReportCsvLines(report, csvCell) {
+  const s = report.expenses.summary;
+  const lines = [
+    csvCell(report.title),
+    csvCell(`Period covered: ${report.period_start} to ${report.period_end}`),
+    '',
+    'By category',
+    ['Category', 'Items', 'Amount ($)', '% of total'].map(csvCell).join(','),
+    ...s.categories.map((c) => [c.label, c.count, c.amount.toFixed(2), c.pct].map(csvCell).join(',')),
+    ['Total', s.count, s.total.toFixed(2), s.total ? 100 : 0].map(csvCell).join(','),
+    '',
+    'All expenses',
+    EXPENSE_COLUMNS.map(([, h]) => csvCell(h)).join(','),
+    ...report.expenses.rows.map((r) => EXPENSE_COLUMNS.map(([k]) => csvCell(r[k])).join(',')),
+    '',
+    'Split of total expenses',
+    ['', '% of total', 'Amount ($)'].map(csvCell).join(','),
+    ...['personal', 'abn', 'tfn'].map((k) => [k === 'personal' ? 'Personal' : k.toUpperCase(), s.split[k].pct, s.split[k].amount.toFixed(2)].map(csvCell).join(',')),
+    ['Total', 100, s.total.toFixed(2)].map(csvCell).join(','),
+    csvCell(`Based on ${s.businessUse}% business use (${s.businessUseSource}); business split ABN ${s.abnShare}% / TFN ${round1(100 - s.abnShare)}% by business km.`),
+  ];
   return lines;
 }

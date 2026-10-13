@@ -95,5 +95,6 @@ export function periodLabel(type, start, end) {
     return `FY${y}-${String(y + 1).slice(2)} (1 Jul ${y} – 30 Jun ${y + 1})`;
   }
   if (type === 'logbook') return `ATO logbook ${prettyDate(start)} – ${prettyDate(end)}`;
+  if (type === 'expenses') return `Expenses ${prettyDate(start)} – ${prettyDate(end)}`;
   return `${prettyDate(start)} – ${prettyDate(end)}`;
 }
