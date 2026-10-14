@@ -31,7 +31,8 @@ home screen. After the first visit it works with no signal.
   personal %, and ABN vs TFN % of business.
 
 ### Expenses
-- Amount, category, supplier (recent suppliers suggested), optional odometer
+- Amount, category, supplier (recent suppliers suggested; for **Petrol** a
+  dropdown of Australian fuel brands plus *Other / independent…*), optional odometer
   and a **receipt photo**. Photos are shrunk to about 150–350 KB and stay
   readable.
 - Categories: petrol, service, repairs, parts, tyres, car wash, registration,

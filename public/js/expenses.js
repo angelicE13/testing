@@ -23,6 +23,14 @@ export const EXPENSE_CATEGORIES = [
 ];
 export const CATEGORY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
+/** Fuel brands and chains in Australia, for the Petrol supplier list (anything else: "Other / independent"). */
+export const FUEL_STATIONS = [
+  '7-Eleven', 'Ampol', 'APCO', 'Astron', 'Atlas', 'Better Choice', 'BP', 'Caltex', 'Coles Express', 'Costco',
+  'EG Ampol', 'Enhance', 'Freedom Fuels', 'Gull', 'Liberty', 'Matilda', 'Metro Petroleum', 'Mobil', 'Night Owl',
+  'On The Run (OTR)', 'Pearl Energy', 'Peak', 'Puma Energy', 'Reddy Express (Shell)', 'Shell', 'Solo',
+  'Speedway', 'U-Go', 'United Petroleum', 'Vibe', 'Westside Petroleum', 'X Convenience',
+];
+
 /** Display name of an expense's category ("Other" expenses carry their own name). */
 export const categoryLabel = (e) => (e.category === 'other' && e.category_label ? e.category_label : CATEGORY[e.category]?.label || e.category);
 

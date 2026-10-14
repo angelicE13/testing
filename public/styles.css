@@ -368,3 +368,4 @@ select { appearance: auto; }
 .odo-box .link { text-transform: none; letter-spacing: 0; font-size: .85rem; padding: 0; }
 .odo-box.editing input::-webkit-outer-spin-button, .odo-box.editing input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .odo-box.editing input { -moz-appearance: textfield; appearance: textfield; }
+#fuel-select { margin-bottom: 6px; }

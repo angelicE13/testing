@@ -219,7 +219,10 @@
       </div>
       <div class="row dt">
         <label>Date<input type="date" name="date"></label>
-        <label>Supplier<input name="supplier" autocomplete="off" placeholder="e.g. BP"></label>
+        <label>Supplier
+          <select id="fuel-select" class="hidden" aria-label="Petrol station"></select>
+          <input name="supplier" autocomplete="off" placeholder="e.g. BP">
+        </label>
       </div>
       <div class="chips" id="supplier-chips"></div>
       <label id="odo-row" class="hidden">Odometer (optional)<input name="odometer" type="number" inputmode="decimal" step="0.1" min="0"></label>

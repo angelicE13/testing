@@ -1,6 +1,6 @@
 // Expenses tab: quick entry with a receipt photo, list by month, edit/delete.
 import {
-  CATEGORY, EXPENSE_CATEGORIES, categoryLabel, customCategories, expensesInRange, isCarRelated, recentSuppliers, summariseExpenses,
+  CATEGORY, EXPENSE_CATEGORIES, FUEL_STATIONS, categoryLabel, customCategories, expensesInRange, isCarRelated, recentSuppliers, summariseExpenses,
 } from './js/expenses.js';
 import { localDate, periodContaining } from './js/periods.js';
 import { summarise, tripsInRange } from './js/logic.js';
@@ -154,8 +154,48 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
         : 'Not car-related: listed in reports with its total, not split by mileage.';
     $('#odo-row').classList.toggle('hidden', !CATEGORY[category]?.odometer);
     const suppliers = recentSuppliers(store.expenses, category);
-    $('#supplier-chips').innerHTML = suppliers.map((n) => `<button type="button" data-supplier="${esc(n)}">${esc(n)}</button>`).join('');
+    paintFuelSelect(category === 'fuel' ? suppliers : null);
+    $('#supplier-chips').innerHTML = category === 'fuel' ? ''
+      : suppliers.map((n) => `<button type="button" data-supplier="${esc(n)}">${esc(n)}</button>`).join('');
   }
+
+  // Petrol: the supplier is picked from a list of fuel brands (recent ones first);
+  // "Other / independent" shows the text box for anything not listed.
+  const OTHER = '__other__';
+  function paintFuelSelect(recentList) {
+    const select = $('#fuel-select');
+    const input = form.elements.supplier;
+    if (!recentList) {
+      select.classList.add('hidden');
+      input.classList.remove('hidden');
+      input.placeholder = 'e.g. Bunnings';
+      return;
+    }
+    const current = input.value.trim();
+    const opt = (n) => `<option value="${esc(n)}">${esc(n)}</option>`;
+    select.innerHTML = `<option value="">Choose petrol station…</option>
+      ${recentList.length ? `<optgroup label="Recent">${recentList.map(opt).join('')}</optgroup>` : ''}
+      <optgroup label="All stations">${FUEL_STATIONS.map(opt).join('')}</optgroup>
+      <option value="${OTHER}">Other / independent…</option>`;
+    // Show the saved supplier: a listed/recent name is selected, anything else is "Other" with the text box.
+    const match = [...recentList, ...FUEL_STATIONS].find((n) => n.toLowerCase() === current.toLowerCase());
+    select.value = match || (current ? OTHER : '');
+    select.classList.remove('hidden');
+    input.placeholder = 'Type the station name';
+    input.classList.toggle('hidden', select.value !== OTHER);
+  }
+
+  $('#fuel-select').addEventListener('change', (e) => {
+    const input = form.elements.supplier;
+    if (e.target.value === OTHER) {
+      input.value = '';
+      input.classList.remove('hidden');
+      input.focus();
+    } else {
+      input.value = e.target.value;
+      input.classList.add('hidden');
+    }
+  });
 
   function showPhoto(url) {
     if (photo.url) URL.revokeObjectURL(photo.url);
