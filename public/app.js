@@ -2,9 +2,10 @@
 // IndexedDB; reports are created whenever the app is opened after a period ends.
 import { Store, memoryAdapter } from './js/store.js';
 import { idbAdapter } from './js/idb.js';
-import { periodContaining, localDate } from './js/periods.js';
+import { addDays, periodContaining, localDate } from './js/periods.js';
 import {
   summarise, tripsInRange, byStartDesc, recentClients, comingFromClient, logbookPeriod, UNIT,
+  logbookStatus, logbookExpiry, recentBusinessUse, LOGBOOK_CHANGE_POINTS,
 } from './js/logic.js';
 import {
   backupZip, countReceipts, deliver, readBackup, receiptsZip, reportFile, taxPack,
@@ -30,7 +31,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.14-6';
+export const APP_VERSION = '2026.10.16-1';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -360,6 +361,49 @@ function renderStats() {
   });
 }
 
+/** Starts a trip now (used by the big buttons and the app-icon shortcuts). */
+async function startTrip(key, startOdo, manual = false) {
+  const q = QUICK.find((x) => x.key === key);
+  const startAt = new Date().toISOString();
+  const from = q.category === 'business'
+    ? comingFromClient(store.trips, Number(startOdo), startAt, TIME_ZONE) : { client: '', type: '' };
+  await store.createTrip({
+    category: q.category,
+    trip_type: q.key,
+    start_at: startAt,
+    start_odo: startOdo,
+    start_odo_manual: manual,
+    between_clients: Boolean(from.client),
+    from_client: from.client,
+    from_type: from.type,
+  });
+}
+
+/** App-icon shortcuts open the app with ?start=<type> or ?add=expense. */
+async function handleShortcut() {
+  const params = new URLSearchParams(window.location.search);
+  const start = params.get('start');
+  const add = params.get('add');
+  if (!start && !add) return;
+  window.history.replaceState(null, '', window.location.pathname); // so a refresh doesn't repeat it
+  if (add === 'expense') {
+    show('expenses');
+    expensesUi.openNew();
+    return;
+  }
+  if (!QUICK.some((q) => q.key === start)) return;
+  if (store.activeTrip()) { toast('A trip is already running — finish it first'); return; }
+  const odo = store.lastEndOdo();
+  if (odo === null) { toast('Enter the odometer, then tap a trip button'); return; }
+  try {
+    await startTrip(start, odo);
+    toast(`${QUICK_LABEL[start]} trip started — drive safe`);
+    await refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 function renderStart() {
   const host = $('#new-trip');
   const odo = state.lastEndOdo;
@@ -375,6 +419,7 @@ function renderStart() {
           <span class="odo-box-head"><span>Odometer</span><span class="odo-hint">✎ Tap to change</span></span>
           <span class="odo-big">${num(odo)} <span>${unit()}</span></span>
         </button>`}
+      ${logbookStrip()}
       <h2 class="quick-title">Tap to start a trip</h2>
       <div class="tiles">
         ${QUICK.map((q) => `
@@ -397,10 +442,10 @@ function renderStart() {
     renderStart();
   });
   $('#add-past').addEventListener('click', openPast);
+  $('#logbook-strip')?.addEventListener('click', () => { setPref('createType', 'logbook'); show('reports'); });
   host.querySelector('.tiles').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-start]');
     if (!b) return;
-    const q = QUICK.find((x) => x.key === b.dataset.start);
     const typed = $('#start-odo')?.value;
     const startOdo = editing ? typed : odo;
     if (startOdo === '' || startOdo === undefined) {
@@ -408,20 +453,8 @@ function renderStart() {
       $('#start-odo').focus();
       return;
     }
-    const startAt = new Date().toISOString();
-    const from = q.category === 'business'
-      ? comingFromClient(store.trips, Number(startOdo), startAt, TIME_ZONE) : { client: '', type: '' };
     try {
-      await store.createTrip({
-        category: q.category,
-        trip_type: q.key,
-        start_at: startAt,
-        start_odo: startOdo,
-        start_odo_manual: editing && odo !== null && Number(startOdo) !== odo,
-        between_clients: Boolean(from.client),
-        from_client: from.client,
-        from_type: from.type,
-      });
+      await startTrip(b.dataset.start, startOdo, editing && odo !== null && Number(startOdo) !== odo);
       state.editOdo = false;
       toast('Trip started — drive safe');
       await refresh();
@@ -617,9 +650,119 @@ function renderOdoCheck() {
   });
 }
 
+// ---------- ATO logbook guide ----------
+const todayLocal = () => localDate(new Date(), TIME_ZONE);
+const prettyDay = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+function currentLogbookStatus() {
+  const active = store.activeLogbook();
+  return active ? logbookStatus(store.trips, active.start, new Date(), TIME_ZONE) : null;
+}
+
+/** Latest logbook report that is finished (not the one being kept now). */
+function lastFinishedLogbook() {
+  const active = store.activeLogbook();
+  return store.reports
+    .filter((r) => r.period_type === 'logbook' && r.logbook && r.period_start !== active?.start && r.period_end < todayLocal())
+    .sort((a, b) => (a.period_end < b.period_end ? 1 : -1))[0] || null;
+}
+
+function logbookStrip() {
+  const st = currentLogbookStatus();
+  if (!st || st.done) return '';
+  return `<button class="logbook-strip" type="button" id="logbook-strip">
+      <span>ATO logbook · day ${st.day} of ${st.days} · ${st.businessUse}% business so far</span>
+      <span class="strip-bar"><i style="width:${Math.round((st.day / st.days) * 100)}%"></i></span>
+    </button>`;
+}
+
+const snoozed = (kind) => (store.meta.logbookSnooze?.[kind] || '') > todayLocal();
+async function snooze(kind, days) {
+  await store.setMeta('logbookSnooze', { ...(store.meta.logbookSnooze || {}), [kind]: addDays(todayLocal(), days) });
+  renderLogbookNag();
+}
+
+async function startLogbookToday() {
+  await store.startLogbook(todayLocal());
+  toast('12-week ATO logbook started — just log your trips as usual');
+  await refresh();
+}
+
+function renderLogbookNag() {
+  const host = $('#logbook-nag');
+  const banner = (text, actions) => {
+    host.innerHTML = `<div class="warn logbook-nag"><div>${text}</div><div class="nag-actions">${actions}</div></div>`;
+  };
+  host.innerHTML = '';
+  if (!store.trips.length) return;
+  const st = currentLogbookStatus();
+  if (st?.done) {
+    banner(`<strong>Your 12-week ATO logbook is complete</strong> — ${st.businessUse}% business use. Finalise it to lock in the figure.`,
+      '<button class="btn small primary" type="button" data-lb="finalise">Finalise logbook</button>');
+  } else if (!st) {
+    const last = lastFinishedLogbook();
+    if (last) {
+      const expiry = logbookExpiry(last.period_end);
+      const recent = recentBusinessUse(store.trips, todayLocal(), TIME_ZONE);
+      const change = Math.abs(recent.businessPercent - last.logbook.businessUsePercent);
+      if (todayLocal() >= addDays(expiry, -60) && !snoozed('expiry')) {
+        banner(`<strong>Your ATO logbook expires ${prettyDay(expiry)}.</strong> Start a new 12-week logbook to keep claiming with the logbook method.`,
+          '<button class="btn small primary" type="button" data-lb="start">Start today</button><button class="link" type="button" data-lb="snooze-expiry">Later</button>');
+      } else if (recent.total >= 300 && change > LOGBOOK_CHANGE_POINTS && !snoozed('change')) {
+        banner(`<strong>Your car use has changed.</strong> Business use over the last 12 weeks is ${recent.businessPercent}% vs ${last.logbook.businessUsePercent}% in your logbook. If your work travel has changed, the ATO expects a new logbook.`,
+          '<button class="btn small primary" type="button" data-lb="start">Start new logbook</button><button class="link" type="button" data-lb="snooze-change">Dismiss</button>');
+      }
+    } else if (store.trips.length >= 3 && !snoozed('start')) {
+      banner('<strong>Start your 12-week ATO logbook</strong> — you need one to claim car costs with the logbook method. Just keep logging trips as usual.',
+        '<button class="btn small primary" type="button" data-lb="start">Start today</button><button class="link" type="button" data-lb="snooze-start">Later</button>');
+    }
+  }
+}
+
+$('#logbook-nag').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-lb]');
+  if (!b) return;
+  const act = b.dataset.lb;
+  try {
+    if (act === 'start') await startLogbookToday();
+    else if (act === 'finalise') {
+      const r = await store.finaliseLogbook();
+      toast(`Logbook finalised: ${r.logbook.businessUsePercent}% business use. It's in Reports.`);
+      await refresh();
+    } else if (act === 'snooze-start') await snooze('start', 14);
+    else if (act === 'snooze-expiry') await snooze('expiry', 14);
+    else if (act === 'snooze-change') await snooze('change', 30);
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+function renderLogbookStatus() {
+  const st = currentLogbookStatus();
+  const last = lastFinishedLogbook();
+  let html = '';
+  if (st) {
+    html = `<p class="status-line"><strong>Current logbook:</strong> ${prettyDay(st.start)} – ${prettyDay(st.end)}
+      · ${st.done ? 'complete' : `day ${st.day} of ${st.days}`} · ${st.businessUse}% business so far
+      <button class="link danger-link" type="button" id="cancel-logbook">Cancel it</button></p>`;
+  } else if (last) {
+    html = `<p class="status-line"><strong>Logbook in use:</strong> ${prettyDay(last.period_start)} – ${prettyDay(last.period_end)}
+      · ${last.logbook.businessUsePercent}% business · valid until ${prettyDay(logbookExpiry(last.period_end))}</p>`;
+  }
+  $('#logbook-status').innerHTML = html;
+  $('#cancel-logbook')?.addEventListener('click', async () => {
+    if (!confirm('Cancel the current 12-week logbook? Your trips are kept.')) return;
+    await store.cancelLogbook();
+    toast('Logbook cancelled');
+    renderLogbookStatus();
+    renderReports();
+  });
+}
+
 function renderLog() {
   renderStats();
   renderBackupNag();
+  renderLogbookNag();
   renderOdoCheck();
   renderActive();
   if (state.active) $('#new-trip').innerHTML = '';
@@ -997,6 +1140,11 @@ function renderReportForms() {
   const options = Array.from({ length: current - first + 1 }, (_, i) => current - i)
     .map((y) => `<option value="${y}">FY${y}-${String(y + 1).slice(2)} (Jul ${y} – Jun ${y + 1})</option>`).join('');
   $('#tax-form').elements.fy.innerHTML = options;
+  const mf = $('#method-form');
+  const keep = mf.elements.fy.value;
+  mf.elements.fy.innerHTML = options;
+  if (keep) mf.elements.fy.value = keep;
+  renderMethod();
   const sel = $('#fy-form').elements.fy;
   sel.innerHTML = Array.from({ length: current - first + 1 }, (_, i) => current - i)
     .map((y) => `<option value="${y}">FY${y}-${String(y + 1).slice(2)} (Jul ${y} – Jun ${y + 1})</option>`).join('');
@@ -1022,9 +1170,14 @@ $('#logbook-form').addEventListener('submit', async (e) => {
   const start = e.target.elements.start.value;
   if (!start) return toast('Choose the start date');
   try {
-    const report = await store.generateLogbook(start);
+    const running = logbookPeriod(start).end >= todayLocal() && start <= todayLocal();
+    if (running && store.activeLogbook() && store.activeLogbook().start !== start
+      && !confirm('Replace the logbook you are keeping now with this one?')) return undefined;
+    const report = running ? await store.startLogbook(start) : await store.generateLogbook(start);
     setPref('reportFilter', 'all');
     renderReports();
+    renderLogbookStatus();
+    if (running) toast('Logbook started — progress shows on the Log tab');
     await deliver(await reportFile(report, 'xlsx'));
   } catch (err) {
     toast(err.message);
@@ -1044,6 +1197,45 @@ $('#fy-form').addEventListener('submit', async (e) => {
     toast(err.message);
   }
 });
+
+// ---------- logbook vs cents per km ----------
+function renderMethod() {
+  const f = $('#method-form');
+  const fy = Number(f.elements.fy.value);
+  if (!fy) return;
+  const saved = store.fyInputs(fy);
+  if (document.activeElement !== f.elements.rate) f.elements.rate.value = saved.rate;
+  if (document.activeElement !== f.elements.depreciation) f.elements.depreciation.value = saved.depreciation;
+  const c = store.methodComparison(fy);
+  const win = (k) => (c.better === k ? ' class="win"' : '');
+  $('#method-result').innerHTML = `
+    <table class="method-table">
+      <thead><tr><th></th><th${win('logbook')}>Logbook</th><th${win('cents')}>Cents per km</th></tr></thead>
+      <tbody>
+        <tr class="how"><td>How</td><td>${money(c.logbook.base)}<br>× ${c.logbook.businessUse}%</td>
+          <td>${num(c.cents.km)} km${c.cents.capped ? ' (cap)' : ''}<br>× ${c.cents.rate ? `$${c.cents.rate}` : '?'}</td></tr>
+        <tr><td>ABN</td><td>${money(c.logbook.abn)}</td><td>${c.cents.total === null ? '—' : money(c.cents.abn)}</td></tr>
+        <tr><td>TFN</td><td>${money(c.logbook.tfn)}</td><td>${c.cents.total === null ? '—' : money(c.cents.tfn)}</td></tr>
+        <tr class="sum-row"><td>Total</td><td${win('logbook')}>${money(c.logbook.total)}</td><td${win('cents')}>${c.cents.total === null ? '—' : money(c.cents.total)}</td></tr>
+      </tbody>
+    </table>
+    <p class="method-verdict">${c.better === null ? 'Enter the cents-per-km rate to compare.'
+      : c.better === 'equal' ? 'Both methods give the same claim.'
+        : `<strong>${c.better === 'logbook' ? 'Logbook' : 'Cents per km'}</strong> claims ${money(c.difference)} more.`}</p>
+    <p class="muted small">Logbook: car running costs ${money(c.logbook.carCosts)}${c.logbook.depreciation ? ` + depreciation ${money(c.logbook.depreciation)}` : ''},
+      business use ${c.logbook.businessUse}% (${esc(c.source)}).
+      ${c.tolls.business ? `Tolls & parking (${money(c.tolls.business)} business share) are claimed on top under either method.` : ''}
+      Estimates only — confirm with your accountant.</p>`;
+}
+
+$('#method-form').addEventListener('change', async (e) => {
+  const f = $('#method-form');
+  if (e.target.name === 'rate' || e.target.name === 'depreciation') {
+    await store.saveFyInputs(Number(f.elements.fy.value), { rate: f.elements.rate.value, depreciation: f.elements.depreciation.value });
+  }
+  renderMethod();
+});
+$('#method-form').addEventListener('submit', (e) => e.preventDefault());
 
 $('#expense-report-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1229,7 +1421,7 @@ function show(view) {
   $('#title').textContent = TITLES[view];
   if (view === 'history') { renderHistory(); expensesUi.render(); showHistoryPane(); }
   if (view === 'expenses') expensesUi.render();
-  if (view === 'reports') { renderReports(); renderReportForms(); renderClientList(); renderBackupInfo(); }
+  if (view === 'reports') { renderReports(); renderReportForms(); renderLogbookStatus(); renderClientList(); renderBackupInfo(); }
   if (view === 'log') refresh();
   window.scrollTo(0, 0);
 }
@@ -1274,6 +1466,7 @@ async function init() {
   await checkDueReports();
   scheduleMidnightCheck();
   scheduleBackupCheck();
+  await handleShortcut();
 }
 
 init().catch((err) => toast(err.message));

@@ -369,3 +369,24 @@ select { appearance: auto; }
 .odo-box.editing input::-webkit-outer-spin-button, .odo-box.editing input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .odo-box.editing input { -moz-appearance: textfield; appearance: textfield; }
 #fuel-select { margin-bottom: 6px; }
+
+/* ---- logbook guide ---- */
+.logbook-strip { display: block; width: 100%; margin: 8px 0 0; padding: 6px 2px 0; border: none; background: none; color: var(--muted);
+  font: inherit; font-size: .82rem; text-align: left; cursor: pointer; }
+.strip-bar { display: block; height: 4px; border-radius: 4px; background: var(--line); margin-top: 4px; overflow: hidden; }
+.strip-bar i { display: block; height: 100%; background: var(--business); border-radius: 4px; }
+.logbook-nag { margin-bottom: 12px; }
+.nag-actions { display: flex; gap: 14px; align-items: center; margin-top: 8px; }
+.status-line { font-size: .9rem; margin: 0 0 10px; }
+
+/* ---- method comparison ---- */
+.method-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .9rem; margin-top: 4px; }
+.method-table th:first-child, .method-table td:first-child { width: 22%; }
+.method-table .how td { font-size: .8rem; color: var(--muted); }
+.method-table th, .method-table td { padding: 6px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+.method-table th:first-child, .method-table td:first-child { text-align: left; color: var(--muted); }
+.method-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+.method-table .sum-row td { font-weight: 700; border-bottom: none; }
+.method-table .win { color: var(--business); }
+.method-table th.win::after { content: ' ✓'; }
+.method-verdict { margin: 10px 0 6px; }

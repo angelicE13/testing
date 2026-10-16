@@ -1,6 +1,7 @@
 // Turns a stored report into a CSV or Excel file and hands it to the phone
 // (share sheet: Save to Files, Mail, Drive…) or downloads it on a computer.
 import { COLUMNS, csvCell, fileBase, summaryLines, toCsv } from './logic.js';
+import { methodLines } from './methods.js';
 import {
   EXPENSE_COLUMNS, expenseReportCsvLines, expensesCsvLines, expensesInRange, expenseSummaryLines, receiptName,
 } from './expenses.js';
@@ -94,6 +95,19 @@ async function xlsxBlob(report) {
     s.addRow(['Expenses']).font = { bold: true, size: 12 };
     for (const line of expenseSummaryLines(report.expenses.summary)) s.addRow(line);
   }
+
+  if (report.methods) {
+    const m = wb.addWorksheet('Method comparison');
+    m.addRow([`Logbook vs cents per km – ${report.label}`]).font = { bold: true, size: 14 };
+    m.addRow(['Estimates only — confirm with your accountant.']).font = { italic: true, color: { argb: 'FF5F6B7A' } };
+    m.addRow([]);
+    for (const [k, v] of methodLines(report.methods, report.methods.source)) {
+      const row = m.addRow([k, v]);
+      if (!k.startsWith(' ')) row.font = { bold: true };
+    }
+    m.getColumn(1).width = 52;
+    m.getColumn(2).width = 40;
+  }
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
@@ -102,7 +116,9 @@ export async function reportFile(report, format) {
   const name = `${report.period_type === 'expenses' ? `expense-report-${report.period_start}_to_${report.period_end}` : fileBase(report)}.${format}`;
   const csvText = report.period_type === 'expenses'
     ? `\uFEFF${expenseReportCsvLines(report, csvCell).join('\r\n')}\r\n`
-    : toCsv(report) + expensesCsvLines(report, csvCell).map((l) => `${l}\r\n`).join('');
+    : toCsv(report) + [...expensesCsvLines(report, csvCell),
+      ...(report.methods ? ['', 'Logbook vs cents per km', ...methodLines(report.methods, report.methods.source).map(([k, v]) => `${csvCell(k)},${csvCell(v)}`)] : []),
+    ].map((l) => `${l}\r\n`).join('');
   const blob = format === 'csv'
     ? new Blob([csvText], { type: 'text/csv' })
     : await xlsxBlob(report);
@@ -205,6 +221,9 @@ export async function taxPack(store, fyReport, logbook) {
     '',
     'EXPENSES',
     ...(x ? expenseSummaryLines(x).map(([k, v]) => `${k}: ${v}`) : ['No expenses']),
+    '',
+    'LOGBOOK vs CENTS PER KM',
+    ...(fyReport.methods ? methodLines(fyReport.methods, fyReport.methods.source).map(([k, v]) => `${k}${v ? `: ${v}` : ''}`) : []),
     '',
     `Receipt photos included: ${n}`,
     `Trips: ${s.trips} · Business ${s.businessPercent}% (ABN ${s.abnPercent}% / TFN ${s.tfnPercent}%) · Personal ${s.personalPercent}%`,

@@ -316,5 +316,5 @@ export function setupExpenses({ getStore, timeZone, $, $$, esc, prefs, setPref, 
   $('#expense-dialog [data-close]').addEventListener('click', () => dialog.close());
   $('#add-expense').addEventListener('click', () => open());
 
-  return { render };
+  return { render, openNew: () => open() };
 }

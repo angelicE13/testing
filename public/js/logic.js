@@ -341,3 +341,34 @@ export function duePeriods(trips, reports, today, timeZone) {
   }
   return due;
 }
+
+// ---------- ATO logbook guide ----------
+
+export const LOGBOOK_VALID_YEARS = 5;
+export const LOGBOOK_CHANGE_POINTS = 10; // suggest a new logbook if business use moves this much
+
+/** Progress of a 12-week logbook started on `start`, worked out live from the trips. */
+export function logbookStatus(trips, start, now, timeZone) {
+  const { end } = logbookPeriod(start);
+  const r = makeReport(trips, 'logbook', start, end, timeZone, now);
+  return {
+    start,
+    end,
+    day: r.logbook.daysElapsed,
+    days: LOGBOOK_DAYS,
+    done: !r.logbook.inProgress,
+    businessUse: r.logbook.businessUsePercent,
+    totalKm: r.logbook.totalByOdometer,
+  };
+}
+
+/** Last day a logbook ending on `end` can be used (it is valid for 5 years). */
+export function logbookExpiry(end) {
+  const [y, m, d] = end.split('-');
+  return `${Number(y) + LOGBOOK_VALID_YEARS}-${m}-${d}`;
+}
+
+/** Business % over the last 12 weeks, to spot a change in how the car is used. */
+export function recentBusinessUse(trips, today, timeZone) {
+  return summarise(tripsInRange(trips, addDays(today, -(LOGBOOK_DAYS - 1)), today, timeZone));
+}

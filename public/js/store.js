@@ -2,9 +2,11 @@
 // IndexedDB on the phone (see idb.js), an in-memory one in tests.
 import {
   ValidationError, activeTrip, duePeriods, lastEndOdo, logbookPeriod, makeReport, normaliseTrip, odoWarnings,
+  summarise, tripsInRange,
 } from './logic.js';
 import { addDays, localDate } from './periods.js';
 import { attachExpenses, normaliseExpense } from './expenses.js';
+import { compareMethods, comparisonInputs } from './methods.js';
 
 export class Store {
   constructor(adapter, { timeZone }) {
@@ -103,6 +105,7 @@ export class Store {
     const report = makeReport(this.trips, type, start, end, this.timeZone, now, this.meta.car, {
       addExpenses: (r) => attachExpenses(r, this.expenses, logbook),
     });
+    if (type === 'financial_year') report.methods = this.methodComparison(Number(start.slice(0, 4)));
     const existing = this.reports.find(
       (r) => r.period_type === type && r.period_start === start && r.period_end === end,
     );
@@ -218,6 +221,63 @@ export class Store {
   async generateLogbook(start, now = new Date()) {
     const { end } = logbookPeriod(start);
     return this.generateReport('logbook', start, end, now);
+  }
+
+  // ---------- ATO logbook guide ----------
+
+  /** The 12-week logbook being kept right now ({ start }), or null. */
+  activeLogbook() {
+    return this.meta.activeLogbook || null;
+  }
+
+  async startLogbook(start, now = new Date()) {
+    await this.setMeta('activeLogbook', { start });
+    return this.generateLogbook(start, now);
+  }
+
+  /** Rebuilds the logbook report with every trip in its 12 weeks and stops tracking it. */
+  async finaliseLogbook(now = new Date()) {
+    const active = this.activeLogbook();
+    if (!active) return null;
+    const report = await this.generateLogbook(active.start, now);
+    await this.setMeta('activeLogbook', null);
+    return report;
+  }
+
+  async cancelLogbook() {
+    const active = this.activeLogbook();
+    if (!active) return;
+    const { end } = logbookPeriod(active.start);
+    const r = this.reports.find((x) => x.period_type === 'logbook' && x.period_start === active.start && x.period_end === end);
+    if (r) await this.deleteReport(r.id);
+    await this.setMeta('activeLogbook', null);
+  }
+
+  // ---------- logbook vs cents per km ----------
+
+  /** Rate and depreciation entered for a financial year (keyed by the year it starts, e.g. 2026 = FY2026-27). */
+  fyInputs(fy) {
+    return { rate: this.meta.centsRates?.[fy] ?? '', depreciation: this.meta.depreciation?.[fy] ?? '' };
+  }
+
+  async saveFyInputs(fy, { rate, depreciation }) {
+    await this.setMeta('centsRates', { ...(this.meta.centsRates || {}), [fy]: rate === '' ? '' : Number(rate) });
+    await this.setMeta('depreciation', { ...(this.meta.depreciation || {}), [fy]: depreciation === '' ? '' : Number(depreciation) });
+  }
+
+  methodComparison(fy) {
+    const start = `${fy}-07-01`;
+    const end = `${fy + 1}-06-30`;
+    const logbook = this.latestLogbook(end);
+    const inputs = comparisonInputs({
+      tripSummary: summarise(tripsInRange(this.trips, start, end, this.timeZone)),
+      expenses: this.expenses,
+      start,
+      end,
+      logbook,
+      ...this.fyInputs(fy),
+    });
+    return { ...compareMethods(inputs), source: inputs.businessUseSource, fy, start, end };
   }
 
   async saveCar(car) {

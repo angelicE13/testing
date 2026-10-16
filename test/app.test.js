@@ -219,3 +219,37 @@ test('expense report: by category, % of total, and Personal/ABN/TFN split', asyn
     personal: { pct: 60, amount: 120 }, abn: { pct: 30, amount: 60 }, tfn: { pct: 10, amount: 20 },
   });
 });
+
+// ---------- logbook guide & method comparison ----------
+import { logbookStatus, logbookExpiry, recentBusinessUse } from '../public/js/logic.js';
+import { compareMethods, comparisonInputs } from '../public/js/methods.js';
+
+test('logbook guide: progress, completion and 5-year expiry', async () => {
+  const store = await newStore();
+  await store.createTrip(trip({ start_odo: 1000, end_odo: 1040 })); // business 40
+  await store.createTrip(trip({ category: 'personal', trip_type: 'home', purpose: '', start_odo: 1040, end_odo: 1100, start_at: '2026-10-08T00:00:00Z', end_at: null }));
+  const mid = logbookStatus(store.trips, '2026-10-05', new Date('2026-11-07T01:00:00Z'), TZ);
+  assert.deepEqual([mid.day, mid.done, mid.businessUse, mid.end], [34, false, 40, '2026-12-27']);
+  const done = logbookStatus(store.trips, '2026-10-05', new Date('2026-12-28T01:00:00Z'), TZ);
+  assert.equal(done.done, true);
+  assert.equal(logbookExpiry('2026-12-27'), '2031-12-27');
+  assert.equal(recentBusinessUse(store.trips, '2026-10-20', TZ).businessPercent, 40);
+});
+
+test('method comparison: logbook vs cents per km, tolls on top, 5,000 km cap', () => {
+  const c = compareMethods({ carCosts: 6000, tolls: 200, depreciation: 4000, businessUse: 60, abnShare: 75, businessKm: 6000, rate: 0.88 });
+  assert.equal(c.logbook.total, 6000); // (6000 + 4000) × 60%
+  assert.deepEqual([c.logbook.abn, c.logbook.tfn], [4500, 1500]);
+  assert.equal(c.cents.km, 5000);
+  assert.equal(c.cents.total, 4400);
+  assert.equal(c.better, 'logbook');
+  assert.equal(c.difference, 1600);
+  assert.equal(c.tolls.business, 120);
+  assert.equal(compareMethods({ carCosts: 100, businessUse: 50, abnShare: 0, businessKm: 10 }).better, null, 'no rate yet');
+  const inputs = comparisonInputs({
+    tripSummary: { business: 40, businessPercent: 40, abnPercent: 75 },
+    expenses: [{ id: 1, date: '2026-08-01', amount: 100, category: 'fuel' }, { id: 2, date: '2026-08-02', amount: 10, category: 'tolls_parking' }, { id: 3, date: '2026-08-03', amount: 50, category: 'clothing' }],
+    start: '2026-07-01', end: '2027-06-30', logbook: null, rate: '0.88', depreciation: '',
+  });
+  assert.deepEqual([inputs.carCosts, inputs.tolls, inputs.businessUse, inputs.rate], [100, 10, 40, 0.88]);
+});

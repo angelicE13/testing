@@ -30,6 +30,10 @@ home screen. After the first visit it works with no signal.
 - **Breakdown** for the week, month, quarter or financial year: business vs
   personal %, and ABN vs TFN % of business.
 
+### App icon shortcuts (Android)
+Long-press the app icon for **Start ABN trip**, **Start TFN trip**, **Add
+expense**, **To home** and **To work**.
+
 ### Expenses
 - Amount, category, supplier (recent suppliers suggested; for **Petrol** a
   dropdown of Australian fuel brands plus *Other / independent…*), optional odometer
@@ -65,7 +69,16 @@ home screen. After the first visit it works with no signal.
   - at the end, the split of the **car-related** expenses into
     **Personal / ABN / TFN** (% and $), based on your mileage
   - then the not-car-related total (not split) and the overall total
-- **ATO 12-week logbook** with business-use %.
+- **ATO 12-week logbook** with business-use %. The app guides you through it:
+  - a progress strip on the Log tab ("day 34 of 84")
+  - a reminder to finalise it after 12 weeks
+  - a reminder before its 5-year validity ends
+  - a prompt to start a new one if your business use changes by more than
+    10 points
+- **Which method claims more?** Compares the logbook method ((car costs +
+  depreciation) × business-use %) with cents per km (business km up to 5,000 ×
+  the ATO rate you enter) for a financial year, split ABN/TFN. Also included in
+  the financial-year Excel file and the tax pack.
 - **Tax pack:** one zip per financial year with the workbook, the logbook, a
   summary and all receipt photos, ready for your accountant.
 - **Clients:** rename or merge names, for example "ACME" → "Acme Pty Ltd".

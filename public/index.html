@@ -22,6 +22,7 @@
     <!-- Log -->
     <section id="view-log" class="view">
       <div id="backup-nag"></div>
+      <div id="logbook-nag"></div>
       <div id="odo-check"></div>
       <div id="active-trip"></div>
       <div id="new-trip"></div>
@@ -89,6 +90,18 @@
         <div id="reports"></div>
       </div>
 
+      <form class="card" id="method-form">
+        <h2>Which method claims more?</h2>
+        <p class="muted small">Compares the ATO <strong>logbook</strong> method with <strong>cents per km</strong> for a
+          financial year. Find the cents-per-km rate for that year on ato.gov.au (search "cents per kilometre rate").</p>
+        <label>Financial year<select name="fy"></select></label>
+        <div class="row">
+          <label>Cents-per-km rate ($)<input name="rate" type="number" inputmode="decimal" step="0.01" min="0" placeholder="e.g. 0.88"></label>
+          <label>Depreciation ($, optional)<input name="depreciation" type="number" inputmode="decimal" step="1" min="0" placeholder="from accountant"></label>
+        </div>
+        <div id="method-result"></div>
+      </form>
+
       <div class="card">
         <h2>Create a report</h2>
         <div class="chips create-type" id="create-type">
@@ -115,6 +128,7 @@
           <button class="btn primary big" type="submit">Create report</button>
         </form>
         <form id="logbook-form" data-panel="logbook" class="hidden">
+          <div id="logbook-status"></div>
           <label>12 weeks starting on<input type="date" name="start" required></label>
           <p class="muted" id="logbook-end"></p>
           <button class="btn primary big" type="submit">Create logbook</button>
