@@ -390,3 +390,7 @@ select { appearance: auto; }
 .method-table .win { color: var(--business); }
 .method-table th.win::after { content: ' ✓'; }
 .method-verdict { margin: 10px 0 6px; }
+
+/* ---- Google Drive ---- */
+.gdrive { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
+.gdrive h3 { font-size: .95rem; margin: 10px 0 6px; }

@@ -180,6 +180,25 @@
           <button class="btn primary" type="button" data-backup>Save backup</button>
           <label class="btn file-btn">Restore backup<input type="file" id="restore" accept=".zip,.json,application/zip,application/json"></label>
         </div>
+        <div class="gdrive" id="gdrive">
+          <h3>Google Drive</h3>
+          <div id="gdrive-setup">
+            <p class="muted small">Back up automatically to your own Google Drive. The app can only see the backup file it
+              creates. One-time setup: create a Google client ID (see <em>docs/google-drive-setup.md</em> in the
+              project), then paste it here.</p>
+            <label>Google client ID<input id="gdrive-client" autocomplete="off" placeholder="…apps.googleusercontent.com"></label>
+            <button class="btn" type="button" id="gdrive-save-client">Save client ID</button>
+          </div>
+          <div id="gdrive-ready" class="hidden">
+            <p class="muted small" id="gdrive-info"></p>
+            <div class="row">
+              <button class="btn primary" type="button" id="gdrive-backup">Back up to Drive now</button>
+              <button class="btn" type="button" id="gdrive-restore">Restore from Drive</button>
+            </div>
+            <p class="small"><button class="link" type="button" id="gdrive-change">Change client ID</button> ·
+              <button class="link danger-link" type="button" id="gdrive-disconnect">Turn off Drive backup</button></p>
+          </div>
+        </div>
         <p class="muted" id="snapshot-info"></p>
         <button class="btn" type="button" id="restore-snapshot" hidden>Go back to last night's copy</button>
       </details>

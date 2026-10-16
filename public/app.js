@@ -11,6 +11,8 @@ import {
   backupZip, countReceipts, deliver, readBackup, receiptsZip, reportFile, taxPack,
 } from './js/files.js';
 import { attachSwipe } from './js/swipe.js';
+import { GOOGLE_CLIENT_ID } from './js/config.js';
+import { downloadBackup, forgetToken, getToken, hasToken, uploadBackup } from './js/gdrive.js';
 import { setupExpenses } from './expenses-ui.js';
 
 let expensesUi;
@@ -31,7 +33,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.16-1';
+export const APP_VERSION = '2026.10.16-2';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -1312,7 +1314,9 @@ function daysSinceBackup() {
 function renderBackupNag() {
   $('#backup-nag').innerHTML = backupDue()
     ? `<div class="warn">Time for tonight's backup.
-       <span><button class="link" type="button" data-backup>Save backup</button>
+       <span>${driveOn()
+        ? '<button class="link" type="button" data-backup-drive>Back up to Google Drive</button>'
+        : '<button class="link" type="button" data-backup>Save backup</button>'}
        <button class="link" type="button" id="snooze-backup">Later</button></span></div>`
     : '';
   $('#snooze-backup')?.addEventListener('click', async () => {
@@ -1326,7 +1330,7 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { weekday: 'short'
 function renderBackupInfo() {
   const days = daysSinceBackup();
   $('#backup-summary').textContent = days === null ? 'never' : days === 0 ? 'today' : `${days}d ago`;
-  $('#backup-info').textContent = `${store.trips.length} trips on this phone. ${
+  $('#backup-info').textContent = `${store.trips.length} trip${store.trips.length === 1 ? '' : 's'} on this phone. ${
     days === null ? 'No backup file saved yet.' : `Last backup file ${days === 0 ? 'today' : `${days} day(s) ago`}.`}`;
   const snap = store.meta.snapshot;
   $('#snapshot-info').textContent = snap
@@ -1346,6 +1350,96 @@ async function backup() {
   return result;
 }
 
+// ---------- Google Drive backup ----------
+const driveClientId = () => store.meta.gdriveClientId ?? GOOGLE_CLIENT_ID;
+const driveOn = () => Boolean(driveClientId());
+
+/** Uploads mileage-backup.zip to Drive. interactive=false only uses a still-valid sign-in. */
+async function backupToDrive({ interactive = true } = {}) {
+  const token = await getToken(driveClientId(), { interactive });
+  if (!token) return false;
+  await uploadBackup(token, await backupZip(store, BACKUP_FILE));
+  const now = new Date().toISOString();
+  await store.setMeta('lastBackupAt', now);
+  await store.setMeta('lastDriveBackupAt', now);
+  renderBackupInfo();
+  renderBackupNag();
+  renderDrive();
+  return true;
+}
+
+/** At 10pm / on open: back up to Drive silently if signed in within the last hour. */
+async function autoDriveBackup() {
+  if (!driveOn() || !hasToken() || !backupDue()) return;
+  try {
+    if (await backupToDrive({ interactive: false })) toast('Backed up to Google Drive');
+  } catch { /* the reminder banner stays, one tap retries */ }
+}
+
+function renderDrive() {
+  const on = driveOn();
+  $('#gdrive-setup').classList.toggle('hidden', on);
+  $('#gdrive-ready').classList.toggle('hidden', !on);
+  $('#gdrive-client').value = store.meta.gdriveClientId || '';
+  const last = store.meta.lastDriveBackupAt;
+  $('#gdrive-info').textContent = `${last ? `Last Drive backup: ${when(last)}.` : 'No Drive backup yet.'} `
+    + 'Each backup replaces the previous one in "Mileage Logbook backups" in your Drive.';
+}
+
+async function withBusy(btn, label, fn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  try { await fn(); } catch (err) { toast(err.message); } finally { btn.disabled = false; btn.textContent = old; }
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-backup-drive]');
+  if (b) withBusy(b, 'Backing up…', async () => { await backupToDrive(); toast('Backed up to Google Drive'); });
+});
+
+$('#gdrive-backup').addEventListener('click', (e) => withBusy(e.target, 'Backing up…', async () => {
+  await backupToDrive();
+  toast('Backed up to Google Drive');
+}));
+
+$('#gdrive-restore').addEventListener('click', (e) => withBusy(e.target, 'Looking…', async () => {
+  const token = await getToken(driveClientId());
+  const found = await downloadBackup(token, BACKUP_FILE);
+  if (!found) { toast('No backup found in your Google Drive yet'); return; }
+  if (!confirm(`Replace ALL trips and expenses on this device with the Drive backup from ${when(found.modifiedTime)}?`)) return;
+  const { data, photos } = await readBackup(found.file);
+  await store.importData(data);
+  await store.replacePhotos(photos);
+  const n = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  toast(`Restored ${n(store.trips.length, 'trip')} and ${n(store.expenses.length, 'expense')} from Google Drive`);
+  expensesUi.render();
+  renderBackupInfo();
+  await refresh();
+}));
+
+$('#gdrive-save-client').addEventListener('click', async () => {
+  const id = $('#gdrive-client').value.trim();
+  if (!/^[\w-]+\.apps\.googleusercontent\.com$/.test(id)) { toast('That doesn\'t look like a Google client ID (…apps.googleusercontent.com)'); return; }
+  await store.setMeta('gdriveClientId', id);
+  renderDrive();
+  renderBackupNag();
+  toast('Saved — tap "Back up to Drive now" and sign in to Google');
+});
+
+$('#gdrive-change').addEventListener('click', () => {
+  $('#gdrive-setup').classList.remove('hidden');
+  $('#gdrive-ready').classList.add('hidden');
+});
+
+$('#gdrive-disconnect').addEventListener('click', async () => {
+  if (!confirm('Turn off Google Drive backup on this device? Your backup stays in your Drive.')) return;
+  forgetToken();
+  await store.setMeta('gdriveClientId', '');
+  renderDrive();
+  renderBackupNag();
+});
+
 $('#restore-snapshot').addEventListener('click', async () => {
   const snap = store.meta.snapshot;
   if (!snap) return;
@@ -1362,7 +1456,9 @@ function scheduleBackupCheck() {
   const now = new Date();
   const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), BACKUP_HOUR, 0, 5);
   if (next <= now) next.setDate(next.getDate() + 1);
-  setTimeout(() => { nightlySnapshot().finally(() => { renderBackupNag(); scheduleBackupCheck(); }); }, next - now);
+  setTimeout(() => {
+    nightlySnapshot().finally(() => { renderBackupNag(); autoDriveBackup(); scheduleBackupCheck(); });
+  }, next - now);
 }
 
 document.addEventListener('click', (e) => {
@@ -1407,6 +1503,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && store) {
     checkDueReports().catch(() => {});
     nightlySnapshot().catch(() => {});
+    autoDriveBackup();
     refresh();
   }
 });
@@ -1421,7 +1518,7 @@ function show(view) {
   $('#title').textContent = TITLES[view];
   if (view === 'history') { renderHistory(); expensesUi.render(); showHistoryPane(); }
   if (view === 'expenses') expensesUi.render();
-  if (view === 'reports') { renderReports(); renderReportForms(); renderLogbookStatus(); renderClientList(); renderBackupInfo(); }
+  if (view === 'reports') { renderReports(); renderReportForms(); renderLogbookStatus(); renderClientList(); renderBackupInfo(); renderDrive(); }
   if (view === 'log') refresh();
   window.scrollTo(0, 0);
 }
@@ -1467,6 +1564,7 @@ async function init() {
   scheduleMidnightCheck();
   scheduleBackupCheck();
   await handleShortcut();
+  autoDriveBackup();
 }
 
 init().catch((err) => toast(err.message));

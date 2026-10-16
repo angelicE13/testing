@@ -89,6 +89,14 @@ expense**, **To home** and **To work**.
 - A one-tap reminder saves **mileage-backup.zip** (trips, expenses and photos).
   Choose *Replace* to keep one up-to-date file. *Restore backup* loads it on
   a new phone.
+- **Google Drive backup** (optional): after a one-time setup
+  ([docs/google-drive-setup.md](docs/google-drive-setup.md)), backups go to
+  *My Drive / Mileage Logbook backups / mileage-backup.zip*:
+  - automatically if you signed in within the last hour, otherwise with one tap
+  - each backup replaces the last
+  - *Restore from Drive* on a new device
+
+  The app only gets access to files it creates.
 
 > ⚠️ Because data lives only on the phone, deleting the app, clearing Safari or
 > Chrome website data, or losing the phone deletes your trips. Back up regularly.
