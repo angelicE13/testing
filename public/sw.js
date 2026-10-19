@@ -1,7 +1,7 @@
 // Keeps the app working with no signal by storing every file on the phone.
 // With signal, it always asks the website for the latest files first (so updates
 // arrive straight away) and falls back to the stored copy if the network is slow or down.
-const VERSION = '2026.10.16-2';
+const VERSION = '2026.10.19-1';
 const CACHE = `mileage-${VERSION}`;
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'expenses-ui.js', 'manifest.webmanifest',

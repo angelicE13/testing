@@ -12,7 +12,9 @@ import {
 } from './js/files.js';
 import { attachSwipe } from './js/swipe.js';
 import { GOOGLE_CLIENT_ID } from './js/config.js';
-import { downloadBackup, forgetToken, getToken, hasToken, uploadBackup } from './js/gdrive.js';
+import {
+  downloadBackup, forgetToken, getToken, hasToken, preloadGoogle, redirectUri, signInWithRedirect, takeRedirectToken, uploadBackup,
+} from './js/gdrive.js';
 import { setupExpenses } from './expenses-ui.js';
 
 let expensesUi;
@@ -33,7 +35,7 @@ const TYPE_LABEL = {
   tfn: 'Business · TFN', abn: 'Business · ABN',
 };
 
-export const APP_VERSION = '2026.10.16-2';
+export const APP_VERSION = '2026.10.19-1';
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Australia/Melbourne';
 let store;
 const state = { lastEndOdo: null, active: null, trips: [], view: 'log' };
@@ -1378,6 +1380,8 @@ async function autoDriveBackup() {
 
 function renderDrive() {
   const on = driveOn();
+  if (on) preloadGoogle();
+  $('#gdrive-redirect-uri').textContent = redirectUri();
   $('#gdrive-setup').classList.toggle('hidden', on);
   $('#gdrive-ready').classList.toggle('hidden', !on);
   $('#gdrive-client').value = store.meta.gdriveClientId || '';
@@ -1402,6 +1406,20 @@ $('#gdrive-backup').addEventListener('click', (e) => withBusy(e.target, 'Backing
   await backupToDrive();
   toast('Backed up to Google Drive');
 }));
+
+$('#gdrive-other-signin').addEventListener('click', () => signInWithRedirect(driveClientId(), 'backup'));
+
+/** After a full-page Google sign-in: carry on with the backup that was asked for. */
+async function finishRedirectSignIn() {
+  const result = takeRedirectToken();
+  if (!result) return;
+  if (result.error) { toast(`Google sign-in failed (${result.error})`); return; }
+  try {
+    if (result.action === 'backup' && await backupToDrive({ interactive: false })) toast('Signed in and backed up to Google Drive');
+  } catch (err) {
+    toast(err.message);
+  }
+}
 
 $('#gdrive-restore').addEventListener('click', (e) => withBusy(e.target, 'Looking…', async () => {
   const token = await getToken(driveClientId());
@@ -1564,6 +1582,8 @@ async function init() {
   scheduleMidnightCheck();
   scheduleBackupCheck();
   await handleShortcut();
+  await finishRedirectSignIn();
+  if (driveOn()) preloadGoogle();
   autoDriveBackup();
 }
 

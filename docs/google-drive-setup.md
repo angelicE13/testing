@@ -33,7 +33,9 @@ Do this on a computer, signed in with the Google account whose Drive you want to
    `https://angelice13.github.io`
    (no `/testing`, no slash at the end). If you move the app to a new GitHub account later, add
    that address too, e.g. `https://newname.github.io`.
-4. Leave "Authorised redirect URIs" empty → **Create**.
+4. Under **Authorised redirect URIs** click **Add URI** and enter the app's full address, e.g.
+   `https://angelice13.github.io/testing/` (with the slash at the end). This lets
+   "Sign in another way" work if the sign-in window is blocked. Then **Create**.
 5. Copy the **Client ID**. It ends in `.apps.googleusercontent.com`.
 
 ## 5. Put it in the app
